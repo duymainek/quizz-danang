@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Cố định theme sáng: UI hiện tại (màu nền trắng/xám nhạt, chữ đậm) chưa
+   được thiết kế cho dark mode. Nếu để tự chuyển theo prefers-color-scheme,
+   --foreground sẽ đổi thành màu sáng trong khi các nút/link không set màu
+   chữ tường minh (VD nút outline "border-slate-300") vẫn kế thừa màu này
+   từ body, khiến chữ gần như trong suốt trên nền trắng. Khi nào làm dark
+   mode thật sự thì cần audit lại toàn bộ text color của từng component,
+   không chỉ đổi 2 biến này.
+*/
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
