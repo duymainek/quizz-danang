@@ -7,6 +7,7 @@ import { ExamForm, type ExamFormValue } from "@/components/admin/ExamForm";
 
 type ExamDetail = ExamFormValue & {
   id: string;
+  is_active: boolean;
   student_codes_count: number;
   used_codes_count: number;
   subjects: { name: string } | null;
@@ -29,6 +30,7 @@ export default function ExamDetailPage({
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -79,6 +81,38 @@ export default function ExamDetailPage({
       return;
     }
     router.push("/admin/exams");
+  }
+
+  async function handleToggleActive() {
+    if (!exam) return;
+    const nextValue = !exam.is_active;
+    if (
+      nextValue &&
+      !confirm(
+        "Mở đề thi này? Thí sinh sẽ thấy đề ở trang chọn đề và có thể bắt đầu vào thi ngay."
+      )
+    )
+      return;
+    if (
+      !nextValue &&
+      !confirm("Đóng đề thi này? Thí sinh chưa bắt đầu sẽ không thể vào thi nữa (người đang thi dở vẫn tiếp tục bình thường).")
+    )
+      return;
+    setTogglingActive(true);
+    try {
+      const res = await fetch(`/api/admin/exams/${id}/active`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: nextValue }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Có lỗi xảy ra");
+    } finally {
+      setTogglingActive(false);
+    }
   }
 
   if (loading) return <p className="text-sm text-slate-500">Đang tải...</p>;
@@ -140,10 +174,30 @@ export default function ExamDetailPage({
 
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">{exam.name}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold text-slate-900">{exam.name}</h1>
+            <span
+              className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                exam.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+              }`}
+            >
+              {exam.is_active ? "Đang mở cho thí sinh" : "Chưa mở"}
+            </span>
+          </div>
           <p className="text-sm text-slate-500">{exam.subjects?.name}</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={handleToggleActive}
+            disabled={togglingActive}
+            className={`rounded-md text-sm px-4 py-2 font-medium disabled:opacity-50 ${
+              exam.is_active
+                ? "border border-amber-300 text-amber-700 hover:bg-amber-50"
+                : "bg-emerald-600 text-white hover:bg-emerald-500"
+            }`}
+          >
+            {togglingActive ? "Đang lưu..." : exam.is_active ? "Đóng đề thi" : "Mở đề thi"}
+          </button>
           <Link
             href={`/admin/exams/${id}/dashboard`}
             className="rounded-md bg-blue-600 text-white text-sm px-4 py-2 hover:bg-blue-500"

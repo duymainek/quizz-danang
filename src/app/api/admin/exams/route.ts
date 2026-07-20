@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     let query = db
       .from("exams")
       .select(
-        "id, subject_id, name, duration_minutes, max_violations, monitoring_enabled, created_at, subjects(name), exam_pool_configs(num_questions_to_draw), student_codes(count)"
+        "id, subject_id, name, duration_minutes, max_violations, monitoring_enabled, is_active, created_at, subjects(name), exam_pool_configs(num_questions_to_draw), student_codes(count)"
       )
       .order("created_at", { ascending: false });
 
@@ -80,6 +80,7 @@ export async function POST(req: NextRequest) {
         monitoring_enabled: body.monitoring_enabled,
         scoring_mode: body.scoring_mode,
         scale: body.scale,
+        is_active: body.is_active,
       })
       .select()
       .single();

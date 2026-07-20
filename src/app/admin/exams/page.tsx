@@ -9,6 +9,7 @@ type Exam = {
   duration_minutes: number;
   max_violations: number;
   monitoring_enabled: boolean;
+  is_active: boolean;
   total_questions: number;
   student_codes_count: number;
   subjects: { name: string } | null;
@@ -81,12 +82,23 @@ export default function ExamsPage() {
           {exams.map((e) => (
             <li key={e.id} className="flex items-center justify-between px-4 py-3">
               <div>
-                <Link
-                  href={`/admin/exams/${e.id}`}
-                  className="font-medium text-slate-900 hover:underline"
-                >
-                  {e.name}
-                </Link>
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/admin/exams/${e.id}`}
+                    className="font-medium text-slate-900 hover:underline"
+                  >
+                    {e.name}
+                  </Link>
+                  <span
+                    className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                      e.is_active
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-slate-100 text-slate-500"
+                    }`}
+                  >
+                    {e.is_active ? "Đang mở" : "Chưa mở"}
+                  </span>
+                </div>
                 <p className="text-xs text-slate-500">
                   {e.subjects?.name} · {e.total_questions} câu · {e.duration_minutes} phút ·
                   {" "}

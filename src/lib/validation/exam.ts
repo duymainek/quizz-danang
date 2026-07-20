@@ -18,6 +18,7 @@ export const examInputSchema = z.object({
   monitoring_enabled: z.boolean(),
   scoring_mode: scoringModeSchema.default("uniform"),
   scale: z.number().positive("Thang điểm phải lớn hơn 0").default(10),
+  is_active: z.boolean().default(false),
   pool_configs: z
     .array(poolConfigInputSchema)
     .min(1, "Đề thi phải có ít nhất 1 tệp câu hỏi được cấu hình")

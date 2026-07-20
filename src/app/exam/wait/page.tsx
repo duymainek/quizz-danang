@@ -27,7 +27,8 @@ export default function ExamWaitPage() {
     const raw = sessionStorage.getItem("exam_summary");
     const studentRaw = sessionStorage.getItem("exam_student");
     const code = sessionStorage.getItem("exam_code");
-    if (!raw || !code) {
+    const examId = sessionStorage.getItem("exam_id");
+    if (!raw || !code || !examId) {
       router.replace("/exam");
       return;
     }
@@ -37,7 +38,8 @@ export default function ExamWaitPage() {
 
   async function handleStart() {
     const code = sessionStorage.getItem("exam_code");
-    if (!code) {
+    const examId = sessionStorage.getItem("exam_id");
+    if (!code || !examId) {
       router.replace("/exam");
       return;
     }
@@ -61,12 +63,13 @@ export default function ExamWaitPage() {
       const res = await fetch("/api/exam/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ exam_id: examId, code }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       sessionStorage.removeItem("exam_summary");
       sessionStorage.removeItem("exam_code");
+      sessionStorage.removeItem("exam_id");
       router.push("/exam/take");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Có lỗi xảy ra");

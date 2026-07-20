@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const loginSchema = z.object({
+  exam_id: z.string().uuid("Đề thi không hợp lệ"),
   code: z.string().trim().min(1, "Vui lòng nhập mã số"),
 });
 

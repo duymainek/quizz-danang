@@ -13,20 +13,24 @@ import { scoreSession } from "@/lib/exam/scoring";
 
 export async function POST(req: NextRequest) {
   try {
-    const { code } = loginSchema.parse(await req.json());
+    const { exam_id, code } = loginSchema.parse(await req.json());
     const db = createAdminClient();
 
+    // Mã số chỉ duy nhất TRONG PHẠM VI 1 đề thi (student_codes_exam_id_code_key)
+    // — 1 thí sinh có thể dùng cùng số báo danh cho nhiều đề khác nhau, nên
+    // phải khớp cả exam_id lẫn code, không tra theo code đơn lẻ nữa.
     const { data: studentCode, error } = await db
       .from("student_codes")
       .select(
-        "id, code, student_name, status, exam_id, exams(name, duration_minutes, max_violations, monitoring_enabled, exam_pool_configs(num_questions_to_draw))"
+        "id, code, student_name, status, exam_id, exams(name, duration_minutes, max_violations, monitoring_enabled, is_active, exam_pool_configs(num_questions_to_draw))"
       )
+      .eq("exam_id", exam_id)
       .eq("code", code.toUpperCase())
       .maybeSingle();
 
     if (error) throw error;
     if (!studentCode) {
-      return jsonError("Mã số không đúng hoặc không tồn tại", 404);
+      return jsonError("Mã số không đúng hoặc không thuộc đề thi này", 404);
     }
 
     const exam = studentCode.exams as unknown as {
@@ -34,6 +38,7 @@ export async function POST(req: NextRequest) {
       duration_minutes: number;
       max_violations: number;
       monitoring_enabled: boolean;
+      is_active: boolean;
       exam_pool_configs: { num_questions_to_draw: number }[];
     };
     const totalQuestions = exam.exam_pool_configs.reduce(
@@ -57,6 +62,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (studentCode.status === "unused" || studentCode.status === "reset") {
+      // Đề đã bị admin đóng (is_active=false) sau khi mã được sinh ra —
+      // chặn bắt đầu lượt mới, nhưng không ảnh hưởng ai đang thi dở (nhánh
+      // in_progress bên dưới không bị chặn bởi is_active).
+      if (!exam.is_active) {
+        return jsonError(
+          "Đề thi này hiện chưa mở hoặc đã đóng, vui lòng liên hệ giám thị",
+          403
+        );
+      }
       return NextResponse.json({ phase: "waiting", exam: examSummary, student: studentSummary });
     }
 

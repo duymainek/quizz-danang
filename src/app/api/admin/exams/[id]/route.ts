@@ -109,6 +109,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         monitoring_enabled: body.monitoring_enabled,
         scoring_mode: body.scoring_mode,
         scale: body.scale,
+        is_active: body.is_active,
       })
       .eq("id", id)
       .select()

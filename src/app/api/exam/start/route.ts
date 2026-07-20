@@ -13,16 +13,31 @@ import { generateExamSnapshot, toPublicQuestions } from "@/lib/exam/generate-sna
 
 export async function POST(req: NextRequest) {
   try {
-    const { code } = loginSchema.parse(await req.json());
+    const { exam_id, code } = loginSchema.parse(await req.json());
     const db = createAdminClient();
     const normalizedCode = code.toUpperCase();
 
+    const { data: exam, error: examErr } = await db
+      .from("exams")
+      .select("duration_minutes, is_active")
+      .eq("id", exam_id)
+      .single();
+    if (examErr || !exam) return jsonError("Không tìm thấy đề thi", 404);
+    if (!exam.is_active) {
+      return jsonError(
+        "Đề thi này hiện chưa mở hoặc đã đóng, vui lòng liên hệ giám thị",
+        403
+      );
+    }
+
     // UPDATE có điều kiện — Postgres tự đảm bảo atomic: nếu 2 request cùng
     // mã đến gần như đồng thời, chỉ 1 request nhận được row (race-safe),
-    // request còn lại nhận 0 row và phải coi như "đã bắt đầu rồi".
+    // request còn lại nhận 0 row và phải coi như "đã bắt đầu rồi". Lọc theo
+    // cả exam_id lẫn code vì mã số giờ chỉ duy nhất trong phạm vi 1 đề.
     const { data: claimed, error: claimErr } = await db
       .from("student_codes")
       .update({ status: "in_progress" })
+      .eq("exam_id", exam_id)
       .eq("code", normalizedCode)
       .in("status", ["unused", "reset"])
       .select("id, exam_id")
@@ -34,9 +49,10 @@ export async function POST(req: NextRequest) {
       const { data: existing } = await db
         .from("student_codes")
         .select("status")
+        .eq("exam_id", exam_id)
         .eq("code", normalizedCode)
         .maybeSingle();
-      if (!existing) return jsonError("Mã số không đúng hoặc không tồn tại", 404);
+      if (!existing) return jsonError("Mã số không đúng hoặc không thuộc đề thi này", 404);
       if (existing.status === "submitted") {
         return jsonError("Mã số này đã nộp bài, không thể bắt đầu lại", 409);
       }
@@ -54,12 +70,6 @@ export async function POST(req: NextRequest) {
       await db.from("student_codes").update({ status: "unused" }).eq("id", claimed.id);
       throw err;
     }
-
-    const { data: exam } = await db
-      .from("exams")
-      .select("duration_minutes")
-      .eq("id", claimed.exam_id)
-      .single();
 
     const token = generateOpaqueToken();
     const ip = req.headers.get("x-forwarded-for") ?? "unknown";
@@ -91,13 +101,13 @@ export async function POST(req: NextRequest) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: (exam?.duration_minutes ?? 60) * 60 + 3600,
+      maxAge: exam.duration_minutes * 60 + 3600,
     });
 
     return NextResponse.json({
       session_id: session.id,
       started_at: session.started_at,
-      duration_minutes: exam?.duration_minutes ?? 60,
+      duration_minutes: exam.duration_minutes,
       questions: toPublicQuestions(snapshot),
     });
   } catch (err) {
