@@ -12,7 +12,6 @@ type Exam = {
   is_active: boolean;
   total_questions: number;
   student_codes_count: number;
-  subjects: { name: string } | null;
 };
 
 export default function ExamsPage() {
@@ -100,8 +99,7 @@ export default function ExamsPage() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500">
-                  {e.subjects?.name} · {e.total_questions} câu · {e.duration_minutes} phút ·
-                  {" "}
+                  {e.total_questions} câu · {e.duration_minutes} phút ·{" "}
                   {e.monitoring_enabled ? "có giám sát" : "không giám sát"} ·{" "}
                   {e.student_codes_count} mã số đã sinh
                 </p>

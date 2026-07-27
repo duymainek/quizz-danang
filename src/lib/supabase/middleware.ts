@@ -48,7 +48,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user && pathname === "/login") {
-    return NextResponse.redirect(new URL("/admin/subjects", request.url));
+    return NextResponse.redirect(new URL("/admin", request.url));
   }
 
   return response;

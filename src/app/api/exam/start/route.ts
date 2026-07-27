@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError, jsonError } from "@/lib/api-helpers";
-import { loginSchema } from "@/lib/validation/exam-flow";
+import { examEntrySchema } from "@/lib/validation/exam-flow";
+import { resolveStudentSession } from "@/lib/student/session";
 import {
   EXAM_COOKIE_NAME,
   buildCookieValue,
@@ -13,9 +14,9 @@ import { generateExamSnapshot, toPublicQuestions } from "@/lib/exam/generate-sna
 
 export async function POST(req: NextRequest) {
   try {
-    const { exam_id, code } = loginSchema.parse(await req.json());
+    const { exam_id } = examEntrySchema.parse(await req.json());
+    const { student } = await resolveStudentSession();
     const db = createAdminClient();
-    const normalizedCode = code.toUpperCase();
 
     const { data: exam, error: examErr } = await db
       .from("exams")
@@ -31,33 +32,30 @@ export async function POST(req: NextRequest) {
     }
 
     // UPDATE có điều kiện — Postgres tự đảm bảo atomic: nếu 2 request cùng
-    // mã đến gần như đồng thời, chỉ 1 request nhận được row (race-safe),
-    // request còn lại nhận 0 row và phải coi như "đã bắt đầu rồi". Lọc theo
-    // cả exam_id lẫn code vì mã số giờ chỉ duy nhất trong phạm vi 1 đề.
+    // thí sinh đến gần như đồng thời, chỉ 1 request nhận được row (race-safe).
     const { data: claimed, error: claimErr } = await db
-      .from("student_codes")
+      .from("exam_assignments")
       .update({ status: "in_progress" })
       .eq("exam_id", exam_id)
-      .eq("code", normalizedCode)
+      .eq("student_id", student.id)
       .in("status", ["unused", "reset"])
       .select("id, exam_id")
       .maybeSingle();
     if (claimErr) throw claimErr;
 
     if (!claimed) {
-      // Không claim được — kiểm tra lý do để trả lỗi rõ ràng cho thí sinh.
       const { data: existing } = await db
-        .from("student_codes")
+        .from("exam_assignments")
         .select("status")
         .eq("exam_id", exam_id)
-        .eq("code", normalizedCode)
+        .eq("student_id", student.id)
         .maybeSingle();
-      if (!existing) return jsonError("Mã số không đúng hoặc không thuộc đề thi này", 404);
+      if (!existing) return jsonError("Bạn chưa được gán vào đề thi này", 404);
       if (existing.status === "submitted") {
-        return jsonError("Mã số này đã nộp bài, không thể bắt đầu lại", 409);
+        return jsonError("Bạn đã nộp bài đề thi này, không thể bắt đầu lại", 409);
       }
       return jsonError(
-        "Bài thi đã được bắt đầu (có thể do bấm 'Bắt đầu' 2 lần) — vui lòng vào lại bằng mã số để tiếp tục.",
+        "Bài thi đã được bắt đầu (có thể do bấm 'Bắt đầu' 2 lần) — vui lòng vào lại để tiếp tục.",
         409
       );
     }
@@ -66,8 +64,8 @@ export async function POST(req: NextRequest) {
     try {
       snapshot = await generateExamSnapshot(claimed.exam_id);
     } catch (err) {
-      // Compensate: trả mã về trạng thái unused vì không sinh được đề.
-      await db.from("student_codes").update({ status: "unused" }).eq("id", claimed.id);
+      // Compensate: trả assignment về trạng thái unused vì không sinh được đề.
+      await db.from("exam_assignments").update({ status: "unused" }).eq("id", claimed.id);
       throw err;
     }
 
@@ -78,7 +76,7 @@ export async function POST(req: NextRequest) {
     const { data: session, error: sessionErr } = await db
       .from("exam_sessions")
       .insert({
-        student_code_id: claimed.id,
+        exam_assignment_id: claimed.id,
         exam_id: claimed.exam_id,
         snapshot_questions: snapshot,
         session_token_hash: hashToken(token),
@@ -91,7 +89,7 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (sessionErr) {
-      await db.from("student_codes").update({ status: "unused" }).eq("id", claimed.id);
+      await db.from("exam_assignments").update({ status: "unused" }).eq("id", claimed.id);
       throw sessionErr;
     }
 

@@ -38,9 +38,9 @@ export async function POST(req: NextRequest) {
         .eq("id", session.id)
         .eq("status", "in_progress");
       await db
-        .from("student_codes")
+        .from("exam_assignments")
         .update({ status: "submitted" })
-        .eq("id", session.student_code_id);
+        .eq("id", session.exam_assignment_id);
 
       return NextResponse.json({
         violation_count: newCount,

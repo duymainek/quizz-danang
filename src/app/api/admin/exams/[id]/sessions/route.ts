@@ -20,26 +20,29 @@ export async function GET(_req: NextRequest, { params }: Params) {
       .single();
     if (examErr) throw examErr;
 
-    const { data: codes, error } = await db
-      .from("student_codes")
+    const { data: assignments, error } = await db
+      .from("exam_assignments")
       .select(
-        "id, code, student_name, status, exam_sessions(id, started_at, submitted_at, status, violation_count, created_at)"
+        "id, status, created_at, students(code, full_name), exam_sessions(id, started_at, submitted_at, status, violation_count, created_at)"
       )
       .eq("exam_id", examId)
       .order("created_at", { ascending: true });
     if (error) throw error;
 
-    const rows = (codes ?? []).map((c) => {
-      const sessions = (c.exam_sessions ?? []) as {
-        id: string;
-        started_at: string;
-        submitted_at: string | null;
-        status: string;
-        violation_count: number;
-        created_at: string;
-      }[];
+    type SessionRow = {
+      id: string;
+      started_at: string;
+      submitted_at: string | null;
+      status: string;
+      violation_count: number;
+      created_at: string;
+    };
+
+    const rows = (assignments ?? []).map((a) => {
+      const student = a.students as unknown as { code: string; full_name: string | null } | null;
+      const sessions = (a.exam_sessions ?? []) as SessionRow[];
       const latest = sessions.sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        (x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime()
       )[0];
 
       const deadlineAt = latest
@@ -47,10 +50,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
         : null;
 
       return {
-        student_code_id: c.id,
-        code: c.code,
-        student_name: c.student_name,
-        status: c.status,
+        student_code_id: a.id,
+        code: student?.code ?? "",
+        student_name: student?.full_name ?? null,
+        status: a.status,
         session_id: latest?.id ?? null,
         violation_count: latest?.violation_count ?? 0,
         started_at: latest?.started_at ?? null,

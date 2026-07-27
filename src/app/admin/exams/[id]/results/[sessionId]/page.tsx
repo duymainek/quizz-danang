@@ -54,6 +54,41 @@ const EVENT_COLOR: Record<string, string> = {
   submit_success: "border-emerald-300 bg-emerald-50",
 };
 
+function optionsLabel(selected: unknown): string {
+  if (!Array.isArray(selected) || selected.length === 0) return "chưa chọn";
+  return selected
+    .map((idx) => (typeof idx === "number" ? String.fromCharCode(65 + idx) : String(idx)))
+    .join(", ");
+}
+
+/** Diễn giải payload thành câu tiếng Việt dễ hiểu, thay vì hiện thẳng JSON thô. */
+function describeEvent(ev: SessionEvent, questionLabel: (id: string) => string): string | null {
+  const p = ev.payload ?? {};
+  switch (ev.type) {
+    case "session_loaded":
+      return `Đề có ${p.total_questions ?? "?"} câu, đã trả lời trước đó ${p.already_answered ?? 0} câu.`;
+    case "answer_first_select":
+      return `${questionLabel(String(p.question_id ?? ""))}: chọn đáp án ${optionsLabel(p.new_selected)}.`;
+    case "answer_change":
+      return `${questionLabel(String(p.question_id ?? ""))}: đổi từ ${optionsLabel(
+        p.previous_selected
+      )} sang ${optionsLabel(p.new_selected)}.`;
+    case "answer_save_failed":
+      return `${questionLabel(String(p.question_id ?? ""))}: không lưu được đáp án (mất mạng hoặc lỗi máy chủ).`;
+    case "answer_save_recovered":
+      return `${questionLabel(String(p.question_id ?? ""))}: đã lưu lại thành công.`;
+    case "submit_error":
+      return p.error ? `Lỗi: ${p.error}` : "Nộp bài thất bại, thí sinh có thể đã thử lại.";
+    case "submit_attempt":
+    case "submit_success":
+    case "network_offline":
+    case "network_online":
+      return null;
+    default:
+      return Object.keys(p).length > 0 ? JSON.stringify(p) : null;
+  }
+}
+
 export default function SessionResultPage({
   params,
 }: {
@@ -83,6 +118,11 @@ export default function SessionResultPage({
   if (!data) return null;
 
   const { session, score } = data;
+
+  const questionNumberById = new Map<string, number>();
+  score?.detail.forEach((item, i) => questionNumberById.set(item.question_id, i + 1));
+  const questionLabel = (id: string) =>
+    questionNumberById.has(id) ? `Câu ${questionNumberById.get(id)}` : "Một câu hỏi";
 
   return (
     <div className="space-y-6">
@@ -126,28 +166,27 @@ export default function SessionResultPage({
               <p className="text-sm text-slate-400">Chưa có log nào.</p>
             ) : (
               <ul className="space-y-2 max-h-96 overflow-y-auto">
-                {events.map((ev) => (
-                  <li
-                    key={ev.id}
-                    className={`text-xs border-l-2 pl-3 py-1 rounded-r ${
-                      EVENT_COLOR[ev.type] ?? "border-slate-200"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-slate-800">
-                        {EVENT_LABEL[ev.type] ?? ev.type}
-                      </span>
-                      <span className="text-slate-400 shrink-0">
-                        {new Date(ev.created_at).toLocaleString("vi-VN")}
-                      </span>
-                    </div>
-                    {Object.keys(ev.payload ?? {}).length > 0 && (
-                      <pre className="mt-1 text-[11px] text-slate-500 whitespace-pre-wrap break-all">
-                        {JSON.stringify(ev.payload)}
-                      </pre>
-                    )}
-                  </li>
-                ))}
+                {events.map((ev) => {
+                  const description = describeEvent(ev, questionLabel);
+                  return (
+                    <li
+                      key={ev.id}
+                      className={`text-xs border-l-2 pl-3 py-1.5 rounded-r ${
+                        EVENT_COLOR[ev.type] ?? "border-slate-200"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-slate-800">
+                          {EVENT_LABEL[ev.type] ?? ev.type}
+                        </span>
+                        <span className="text-slate-400 shrink-0">
+                          {new Date(ev.created_at).toLocaleString("vi-VN")}
+                        </span>
+                      </div>
+                      {description && <p className="mt-0.5 text-slate-600">{description}</p>}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

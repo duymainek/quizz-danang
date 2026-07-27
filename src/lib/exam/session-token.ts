@@ -26,3 +26,5 @@ export function parseCookieValue(
   if (!sessionId || !token) return null;
   return { sessionId, token };
 }
+
+export const STUDENT_COOKIE_NAME = "student_session";

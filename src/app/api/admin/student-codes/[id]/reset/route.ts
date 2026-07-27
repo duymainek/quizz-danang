@@ -29,7 +29,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
     const { error: sessionErr } = await db
       .from("exam_sessions")
       .update({ status: "reset" })
-      .eq("student_code_id", id)
+      .eq("exam_assignment_id", id)
       .eq("status", "in_progress");
     if (sessionErr) throw sessionErr;
 

@@ -257,15 +257,24 @@ export default function ExamDashboardPage({
             {(selected.status === "in_progress" || selected.status === "submitted") && (
               <button
                 onClick={async () => {
-                  if (
-                    !confirm(
-                      "Reset lượt thi này? Thí sinh sẽ thi lại từ đầu với đề random mới. Chỉ dùng khi có sự cố khách quan."
-                    )
-                  )
-                    return;
+                  const reuse = confirm(
+                    "Reset lượt thi này? Thí sinh sẽ thi lại từ đầu.\n\nBấm OK để GIỮ NGUYÊN đúng bộ đề đã random trước đó (khuyến nghị — công bằng nhất vì đáp án chưa từng công bố).\n\nBấm Hủy nếu muốn chuyển sang bước random đề HOÀN TOÀN MỚI."
+                  );
+                  let mode: "reuse" | "new" = "reuse";
+                  if (!reuse) {
+                    const regenerate = confirm(
+                      "Random đề HOÀN TOÀN MỚI cho thí sinh này? Chỉ dùng khi nghi ngờ đề đã bị lộ hoặc thí sinh đã kịp ghi nhớ câu hỏi."
+                    );
+                    if (!regenerate) return;
+                    mode = "new";
+                  }
                   const res = await fetch(
                     `/api/admin/student-codes/${selected.student_code_id}/reset`,
-                    { method: "POST" }
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ mode }),
+                    }
                   );
                   const json = await res.json();
                   if (!res.ok) {

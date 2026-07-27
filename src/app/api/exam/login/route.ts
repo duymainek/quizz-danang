@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError, jsonError } from "@/lib/api-helpers";
-import { loginSchema } from "@/lib/validation/exam-flow";
+import { examEntrySchema } from "@/lib/validation/exam-flow";
+import { resolveStudentSession } from "@/lib/student/session";
 import {
   EXAM_COOKIE_NAME,
   buildCookieValue,
@@ -13,27 +14,27 @@ import { scoreSession } from "@/lib/exam/scoring";
 
 export async function POST(req: NextRequest) {
   try {
-    const { exam_id, code } = loginSchema.parse(await req.json());
+    const { exam_id } = examEntrySchema.parse(await req.json());
+    const { student } = await resolveStudentSession();
     const db = createAdminClient();
 
-    // Mã số chỉ duy nhất TRONG PHẠM VI 1 đề thi (student_codes_exam_id_code_key)
-    // — 1 thí sinh có thể dùng cùng số báo danh cho nhiều đề khác nhau, nên
-    // phải khớp cả exam_id lẫn code, không tra theo code đơn lẻ nữa.
-    const { data: studentCode, error } = await db
-      .from("student_codes")
+    // Danh tính thí sinh đến từ cookie /portal (student_session), không còn
+    // nhập lại mã số mỗi đề — 1 thí sinh có thể được gán vào nhiều đề khác nhau.
+    const { data: assignment, error } = await db
+      .from("exam_assignments")
       .select(
-        "id, code, student_name, status, exam_id, exams(name, duration_minutes, max_violations, monitoring_enabled, is_active, exam_pool_configs(num_questions_to_draw))"
+        "id, status, exam_id, exams(name, duration_minutes, max_violations, monitoring_enabled, is_active, exam_pool_configs(num_questions_to_draw))"
       )
       .eq("exam_id", exam_id)
-      .eq("code", code.toUpperCase())
+      .eq("student_id", student.id)
       .maybeSingle();
 
     if (error) throw error;
-    if (!studentCode) {
-      return jsonError("Mã số không đúng hoặc không thuộc đề thi này", 404);
+    if (!assignment) {
+      return jsonError("Bạn chưa được gán vào đề thi này", 404);
     }
 
-    const exam = studentCode.exams as unknown as {
+    const exam = assignment.exams as unknown as {
       name: string;
       duration_minutes: number;
       max_violations: number;
@@ -52,19 +53,16 @@ export async function POST(req: NextRequest) {
       monitoring_enabled: exam.monitoring_enabled,
       total_questions: totalQuestions,
     };
-    const studentSummary = {
-      code: studentCode.code,
-      student_name: studentCode.student_name,
-    };
+    const studentSummary = { code: student.code, student_name: student.full_name };
 
-    if (studentCode.status === "submitted") {
+    if (assignment.status === "submitted") {
       return NextResponse.json({ phase: "submitted" });
     }
 
-    if (studentCode.status === "unused" || studentCode.status === "reset") {
-      // Đề đã bị admin đóng (is_active=false) sau khi mã được sinh ra —
-      // chặn bắt đầu lượt mới, nhưng không ảnh hưởng ai đang thi dở (nhánh
-      // in_progress bên dưới không bị chặn bởi is_active).
+    if (assignment.status === "unused" || assignment.status === "reset") {
+      // Đề đã bị admin đóng (is_active=false) sau khi được gán — chặn bắt đầu
+      // lượt mới, nhưng không ảnh hưởng ai đang thi dở (nhánh in_progress bên
+      // dưới không bị chặn bởi is_active).
       if (!exam.is_active) {
         return jsonError(
           "Đề thi này hiện chưa mở hoặc đã đóng, vui lòng liên hệ giám thị",
@@ -78,7 +76,7 @@ export async function POST(req: NextRequest) {
     const { data: session, error: sessionErr } = await db
       .from("exam_sessions")
       .select("id, started_at, status")
-      .eq("student_code_id", studentCode.id)
+      .eq("exam_assignment_id", assignment.id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -97,7 +95,7 @@ export async function POST(req: NextRequest) {
         .update({ status: "auto_submitted", submitted_at: new Date().toISOString() })
         .eq("id", session.id)
         .eq("status", "in_progress");
-      await db.from("student_codes").update({ status: "submitted" }).eq("id", studentCode.id);
+      await db.from("exam_assignments").update({ status: "submitted" }).eq("id", assignment.id);
       return NextResponse.json({ phase: "submitted" });
     }
 

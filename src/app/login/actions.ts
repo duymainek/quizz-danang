@@ -18,7 +18,7 @@ export async function loginAction(_prevState: { error?: string } | undefined, fo
     return { error: "Email hoặc mật khẩu không đúng" };
   }
 
-  redirect("/admin/subjects");
+  redirect("/admin");
 }
 
 export async function logoutAction() {

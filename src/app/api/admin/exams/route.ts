@@ -4,22 +4,17 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError, jsonError } from "@/lib/api-helpers";
 import { examInputSchema } from "@/lib/validation/exam";
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
     await requireAdminUser();
-    const subjectId = req.nextUrl.searchParams.get("subject_id");
     const db = createAdminClient();
 
-    let query = db
+    const { data, error } = await db
       .from("exams")
       .select(
-        "id, subject_id, name, duration_minutes, max_violations, monitoring_enabled, is_active, created_at, subjects(name), exam_pool_configs(num_questions_to_draw), student_codes(count)"
+        "id, name, duration_minutes, max_violations, monitoring_enabled, is_active, publish_score, created_at, exam_pool_configs(num_questions_to_draw), exam_assignments(count)"
       )
       .order("created_at", { ascending: false });
-
-    if (subjectId) query = query.eq("subject_id", subjectId);
-
-    const { data, error } = await query;
     if (error) throw error;
 
     const exams = (data ?? []).map((e) => ({
@@ -28,7 +23,7 @@ export async function GET(req: NextRequest) {
         (sum: number, c: { num_questions_to_draw: number }) => sum + c.num_questions_to_draw,
         0
       ),
-      student_codes_count: e.student_codes?.[0]?.count ?? 0,
+      student_codes_count: e.exam_assignments?.[0]?.count ?? 0,
     }));
 
     return NextResponse.json({ exams });
@@ -43,11 +38,11 @@ export async function POST(req: NextRequest) {
     const body = examInputSchema.parse(await req.json());
     const db = createAdminClient();
 
-    // Xác thực từng pool thuộc đúng subject và số câu rút không vượt quá số câu có trong pool.
+    // Xác thực số câu rút không vượt quá số câu có trong từng tệp.
     const poolIds = body.pool_configs.map((c) => c.pool_id);
     const { data: pools, error: poolsErr } = await db
       .from("question_pools")
-      .select("id, subject_id, name, questions(count)")
+      .select("id, name, questions(count)")
       .in("id", poolIds);
     if (poolsErr) throw poolsErr;
 
@@ -55,12 +50,6 @@ export async function POST(req: NextRequest) {
     for (const cfg of body.pool_configs) {
       const pool = poolById.get(cfg.pool_id);
       if (!pool) return jsonError(`Không tìm thấy tệp câu hỏi ${cfg.pool_id}`, 422);
-      if (pool.subject_id !== body.subject_id) {
-        return jsonError(
-          `Tệp "${pool.name}" không thuộc môn thi đã chọn`,
-          422
-        );
-      }
       const available = pool.questions?.[0]?.count ?? 0;
       if (cfg.num_questions_to_draw > available) {
         return jsonError(
@@ -73,7 +62,6 @@ export async function POST(req: NextRequest) {
     const { data: exam, error: examErr } = await db
       .from("exams")
       .insert({
-        subject_id: body.subject_id,
         name: body.name,
         duration_minutes: body.duration_minutes,
         max_violations: body.max_violations,
@@ -81,6 +69,7 @@ export async function POST(req: NextRequest) {
         scoring_mode: body.scoring_mode,
         scale: body.scale,
         is_active: body.is_active,
+        publish_score: body.publish_score,
       })
       .select()
       .single();

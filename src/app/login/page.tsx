@@ -2,12 +2,13 @@
 
 import { useActionState } from "react";
 import { loginAction } from "./actions";
+import { Footer } from "@/components/shared/Footer";
 
 export default function AdminLoginPage() {
   const [state, formAction, pending] = useActionState(loginAction, undefined);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+    <div className="relative min-h-screen flex items-center justify-center bg-slate-50 px-4">
       <form
         action={formAction}
         className="w-full max-w-sm bg-white border border-slate-200 rounded-lg p-6 space-y-4 shadow-sm"
@@ -57,6 +58,7 @@ export default function AdminLoginPage() {
           {pending ? "Đang đăng nhập..." : "Đăng nhập"}
         </button>
       </form>
+      <Footer className="absolute bottom-0 left-0 right-0" />
     </div>
   );
 }

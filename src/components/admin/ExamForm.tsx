@@ -2,17 +2,16 @@
 
 import { useEffect, useState } from "react";
 
-type Subject = { id: string; name: string };
 type Pool = { id: string; name: string; questions: { count: number }[] };
 
 export type ExamFormValue = {
-  subject_id: string;
   name: string;
   duration_minutes: number;
   max_violations: number;
   monitoring_enabled: boolean;
   scoring_mode: "uniform" | "per_question";
   scale: number;
+  publish_score: boolean;
   pool_configs: { pool_id: string; num_questions_to_draw: number }[];
 };
 
@@ -27,9 +26,7 @@ export function ExamForm({
   submitting: boolean;
   submitLabel?: string;
 }) {
-  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [pools, setPools] = useState<Pool[]>([]);
-  const [subjectId, setSubjectId] = useState(initial?.subject_id ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [duration, setDuration] = useState(initial?.duration_minutes ?? 60);
   const [maxViolations, setMaxViolations] = useState(initial?.max_violations ?? 3);
@@ -40,6 +37,7 @@ export function ExamForm({
     initial?.scoring_mode ?? "uniform"
   );
   const [scale, setScale] = useState(initial?.scale ?? 10);
+  const [publishScore, setPublishScore] = useState(initial?.publish_score ?? true);
   const [draws, setDraws] = useState<Record<string, number>>(
     Object.fromEntries(
       (initial?.pool_configs ?? []).map((c) => [c.pool_id, c.num_questions_to_draw])
@@ -48,20 +46,10 @@ export function ExamForm({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/admin/subjects")
-      .then((r) => r.json())
-      .then((j) => setSubjects(j.subjects ?? []));
-  }, []);
-
-  useEffect(() => {
-    if (!subjectId) {
-      setPools([]);
-      return;
-    }
-    fetch(`/api/admin/pools?subject_id=${subjectId}`)
+    fetch("/api/admin/pools")
       .then((r) => r.json())
       .then((j) => setPools(j.pools ?? []));
-  }, [subjectId]);
+  }, []);
 
   const totalQuestions = Object.values(draws).reduce((sum, n) => sum + (n || 0), 0);
 
@@ -77,7 +65,6 @@ export function ExamForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!subjectId) return setError("Vui lòng chọn môn thi");
     if (!name.trim()) return setError("Vui lòng nhập tên đề thi");
     const pool_configs = Object.entries(draws)
       .filter(([, n]) => n > 0)
@@ -86,13 +73,13 @@ export function ExamForm({
       return setError("Cấu hình ít nhất 1 tệp câu hỏi với số câu rút > 0");
     }
     await onSubmit({
-      subject_id: subjectId,
       name: name.trim(),
       duration_minutes: duration,
       max_violations: maxViolations,
       monitoring_enabled: monitoringEnabled,
       scoring_mode: scoringMode,
       scale,
+      publish_score: publishScore,
       pool_configs,
     });
   }
@@ -100,30 +87,11 @@ export function ExamForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5 bg-white border border-slate-200 rounded-lg p-5 max-w-2xl">
       <div className="space-y-1">
-        <label className="text-sm font-medium text-slate-700">Môn thi</label>
-        <select
-          value={subjectId}
-          onChange={(e) => {
-            setSubjectId(e.target.value);
-            setDraws({});
-          }}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        >
-          <option value="">-- Chọn môn thi --</option>
-          {subjects.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="space-y-1">
         <label className="text-sm font-medium text-slate-700">Tên đề thi</label>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder='VD: "Môn X — Đề chuẩn"'
+          placeholder='VD: "Đề thi Địa lý — 10 câu"'
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
       </div>
@@ -209,14 +177,27 @@ export function ExamForm({
         )}
       </div>
 
+      <label className="flex items-start gap-2 text-sm text-slate-700 border border-slate-200 rounded-lg p-3">
+        <input
+          type="checkbox"
+          checked={publishScore}
+          onChange={(e) => setPublishScore(e.target.checked)}
+          className="h-4 w-4 mt-0.5"
+        />
+        <span>
+          Công bố điểm cho thí sinh xem lại ở trang cá nhân (/portal). Bỏ chọn nếu đề này
+          chỉ dùng để chấm nội bộ, thí sinh chỉ thấy trạng thái &quot;Đã nộp&quot;, không thấy điểm.
+        </span>
+      </label>
+
       <div className="space-y-2">
         <label className="text-sm font-medium text-slate-700">
           Cấu hình rút câu theo tệp
         </label>
-        {!subjectId ? (
-          <p className="text-sm text-slate-400">Chọn môn thi để xem danh sách tệp câu hỏi.</p>
-        ) : pools.length === 0 ? (
-          <p className="text-sm text-slate-400">Môn này chưa có tệp câu hỏi nào.</p>
+        {pools.length === 0 ? (
+          <p className="text-sm text-slate-400">
+            Chưa có tệp câu hỏi nào — tạo tệp ở trang &quot;Ngân hàng câu hỏi&quot; trước.
+          </p>
         ) : (
           <div className="space-y-2">
             {pools.map((p) => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { AuthError } from "@/lib/auth";
 import { ExamSessionError } from "@/lib/exam/session-guard";
+import { StudentSessionError } from "@/lib/student/session";
 
 export function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -11,6 +12,9 @@ export function jsonError(message: string, status = 400) {
 export function handleApiError(err: unknown) {
   if (err instanceof AuthError) {
     return jsonError(err.message, 401);
+  }
+  if (err instanceof StudentSessionError) {
+    return jsonError(err.message, err.status);
   }
   if (err instanceof ZodError) {
     return jsonError(err.issues.map((i) => i.message).join("; "), 422);

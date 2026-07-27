@@ -26,10 +26,7 @@ export async function GET() {
       violation_count: session.violation_count,
       questions: toPublicQuestions(snapshot),
       answers: answers ?? [],
-      student: {
-        code: session.student_codes.code,
-        student_name: session.student_codes.student_name,
-      },
+      student: session.student,
     });
   } catch (err) {
     return handleExamApiError(err);

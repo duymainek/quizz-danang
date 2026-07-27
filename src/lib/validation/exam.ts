@@ -11,7 +11,6 @@ export const poolConfigInputSchema = z.object({
 export const scoringModeSchema = z.enum(["uniform", "per_question"]);
 
 export const examInputSchema = z.object({
-  subject_id: z.string().uuid("subject_id không hợp lệ"),
   name: z.string().trim().min(1, "Tên đề thi không được để trống").max(200),
   duration_minutes: z.number().int().positive("Thời lượng phải lớn hơn 0 phút"),
   max_violations: z.number().int().min(0, "Số lần vi phạm cho phép phải >= 0"),
@@ -19,6 +18,7 @@ export const examInputSchema = z.object({
   scoring_mode: scoringModeSchema.default("uniform"),
   scale: z.number().positive("Thang điểm phải lớn hơn 0").default(10),
   is_active: z.boolean().default(false),
+  publish_score: z.boolean().default(true),
   pool_configs: z
     .array(poolConfigInputSchema)
     .min(1, "Đề thi phải có ít nhất 1 tệp câu hỏi được cấu hình")

@@ -23,9 +23,9 @@ export async function POST() {
     if (error) throw error;
 
     await db
-      .from("student_codes")
+      .from("exam_assignments")
       .update({ status: "submitted" })
-      .eq("id", session.student_code_id);
+      .eq("id", session.exam_assignment_id);
 
     return NextResponse.json({ ok: true, status: "submitted" });
   } catch (err) {

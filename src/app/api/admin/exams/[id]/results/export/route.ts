@@ -29,10 +29,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
     const { data: exam } = await db.from("exams").select("name").eq("id", examId).single();
 
-    const { data: codes, error } = await db
-      .from("student_codes")
+    const { data: assignments, error } = await db
+      .from("exam_assignments")
       .select(
-        "code, student_name, status, exam_sessions(id, started_at, submitted_at, status, violation_count, created_at)"
+        "status, created_at, students(code, full_name), exam_sessions(id, started_at, submitted_at, status, violation_count, created_at)"
       )
       .eq("exam_id", examId)
       .order("created_at", { ascending: true });
@@ -47,8 +47,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
       created_at: string;
     };
 
-    const allSessionIds = (codes ?? [])
-      .flatMap((c) => (c.exam_sessions ?? []) as SessionRow[])
+    const allSessionIds = (assignments ?? [])
+      .flatMap((a) => (a.exam_sessions ?? []) as SessionRow[])
       .map((s) => s.id);
 
     const scoreBySessionId = new Map<string, number>();
@@ -72,10 +72,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
       "So lan vi pham",
     ];
 
-    const rows = (codes ?? []).map((c) => {
-      const sessions = (c.exam_sessions ?? []) as SessionRow[];
+    const rows = (assignments ?? []).map((a) => {
+      const student = a.students as unknown as { code: string; full_name: string | null } | null;
+      const sessions = (a.exam_sessions ?? []) as SessionRow[];
       const latest = sessions.sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        (x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime()
       )[0];
       const durationMinutes =
         latest?.submitted_at && latest?.started_at
@@ -86,9 +87,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
           : "";
       const score = latest ? scoreBySessionId.get(latest.id) : undefined;
       return [
-        c.code,
-        c.student_name ?? "",
-        STATUS_LABEL[latest?.status ?? c.status] ?? c.status,
+        student?.code ?? "",
+        student?.full_name ?? "",
+        STATUS_LABEL[latest?.status ?? a.status] ?? a.status,
         score !== undefined ? score.toFixed(2) : "",
         durationMinutes,
         latest?.violation_count ?? 0,

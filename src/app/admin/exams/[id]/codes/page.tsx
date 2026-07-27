@@ -2,6 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
+import { useCallback } from "react";
 
 type StudentCode = {
   id: string;
@@ -38,6 +39,16 @@ export default function StudentCodesPage({
   const [namesText, setNamesText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showGenerateForm, setShowGenerateForm] = useState(false);
+  const [showAssignForm, setShowAssignForm] = useState(false);
+  const [assignQuery, setAssignQuery] = useState("");
+  const [assignResults, setAssignResults] = useState<
+    { id: string; code: string; full_name: string | null }[]
+  >([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [assigning, setAssigning] = useState(false);
+  const [pasteCodesText, setPasteCodesText] = useState("");
+  const [pasteLookupLoading, setPasteLookupLoading] = useState(false);
+  const [pasteLookupNotice, setPasteLookupNotice] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -58,6 +69,103 @@ export default function StudentCodesPage({
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examId]);
+
+  const searchStudents = useCallback(async (query: string) => {
+    const url = query
+      ? `/api/admin/students?q=${encodeURIComponent(query)}`
+      : "/api/admin/students";
+    const res = await fetch(url);
+    const json = await res.json();
+    if (res.ok) setAssignResults(json.students);
+  }, []);
+
+  useEffect(() => {
+    if (!showAssignForm) return;
+    const t = setTimeout(() => searchStudents(assignQuery), 250);
+    return () => clearTimeout(t);
+  }, [assignQuery, showAssignForm, searchStudents]);
+
+  function toggleSelected(id: string) {
+    setSelectedStudentIds((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const allVisibleSelected =
+    assignResults.length > 0 && assignResults.every((s) => selectedStudentIds.has(s.id));
+
+  function toggleSelectAllVisible() {
+    setSelectedStudentIds((s) => {
+      const next = new Set(s);
+      if (allVisibleSelected) {
+        for (const r of assignResults) next.delete(r.id);
+      } else {
+        for (const r of assignResults) next.add(r.id);
+      }
+      return next;
+    });
+  }
+
+  async function handlePasteLookup() {
+    const codes = pasteCodesText
+      .split(/[\s,]+/)
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+    if (codes.length === 0) return;
+    setPasteLookupLoading(true);
+    setPasteLookupNotice(null);
+    try {
+      const res = await fetch(`/api/admin/students?codes=${encodeURIComponent(codes.join(","))}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      const found = json.students as { id: string; code: string }[];
+      setSelectedStudentIds((s) => {
+        const next = new Set(s);
+        for (const f of found) next.add(f.id);
+        return next;
+      });
+      const foundCodes = new Set(found.map((f) => f.code));
+      const notFound = codes
+        .map((c) => c.toUpperCase())
+        .filter((c) => !foundCodes.has(c));
+      setPasteLookupNotice(
+        notFound.length === 0
+          ? `Đã thêm ${found.length} mã vào danh sách chọn.`
+          : `Đã thêm ${found.length} mã. Không tìm thấy ${notFound.length} mã: ${notFound.join(", ")}`
+      );
+    } catch (e) {
+      setPasteLookupNotice(e instanceof Error ? e.message : "Có lỗi xảy ra");
+    } finally {
+      setPasteLookupLoading(false);
+    }
+  }
+
+  async function handleAssignExisting() {
+    if (selectedStudentIds.size === 0) return;
+    setAssigning(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/exams/${examId}/assign-students`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_ids: Array.from(selectedStudentIds) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setSelectedStudentIds(new Set());
+      setShowAssignForm(false);
+      setPasteCodesText("");
+      setPasteLookupNotice(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Có lỗi xảy ra");
+    } finally {
+      setAssigning(false);
+    }
+  }
 
   async function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
@@ -149,10 +257,22 @@ export default function StudentCodesPage({
             </a>
           )}
           <button
-            onClick={() => setShowGenerateForm((v) => !v)}
+            onClick={() => {
+              setShowAssignForm((v) => !v);
+              setShowGenerateForm(false);
+            }}
+            className="rounded-md border border-slate-300 text-sm px-4 py-2 text-slate-700 hover:bg-slate-50"
+          >
+            + Gán thí sinh có sẵn
+          </button>
+          <button
+            onClick={() => {
+              setShowGenerateForm((v) => !v);
+              setShowAssignForm(false);
+            }}
             className="rounded-md bg-slate-900 text-white text-sm font-medium px-4 py-2 hover:bg-slate-800"
           >
-            + Sinh thêm mã
+            + Sinh mã mới
           </button>
         </div>
       </div>
@@ -161,6 +281,91 @@ export default function StudentCodesPage({
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
           {error}
         </p>
+      )}
+
+      {showAssignForm && (
+        <div className="space-y-3 bg-white border border-slate-200 rounded-lg p-4 max-w-lg">
+          <p className="text-sm text-slate-500">
+            Chọn thí sinh đã có sẵn trong hệ thống (VD đã thi đề khác) để gán vào đề này —
+            dùng chung mã số, không tạo mã mới.
+          </p>
+          <input
+            value={assignQuery}
+            onChange={(e) => setAssignQuery(e.target.value)}
+            placeholder="Tìm theo mã số hoặc tên..."
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          />
+          {assignResults.length > 0 && (
+            <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                onChange={toggleSelectAllVisible}
+                className="h-4 w-4"
+              />
+              Chọn tất cả {assignResults.length} kết quả đang hiện
+            </label>
+          )}
+          <div className="max-h-64 overflow-y-auto border border-slate-100 rounded-md divide-y divide-slate-100">
+            {assignResults.length === 0 ? (
+              <p className="text-sm text-slate-400 px-3 py-4 text-center">
+                Không tìm thấy thí sinh nào.
+              </p>
+            ) : (
+              assignResults.map((s) => (
+                <label
+                  key={s.id}
+                  className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedStudentIds.has(s.id)}
+                    onChange={() => toggleSelected(s.id)}
+                    className="h-4 w-4"
+                  />
+                  <span className="font-mono text-slate-900">{s.code}</span>
+                  <span className="text-slate-500">{s.full_name || "—"}</span>
+                </label>
+              ))
+            )}
+          </div>
+
+          <details className="border-t border-slate-100 pt-3">
+            <summary className="text-sm text-slate-600 cursor-pointer select-none">
+              Hoặc dán 1 danh sách mã số (mỗi dòng 1 mã)
+            </summary>
+            <div className="mt-2 space-y-2">
+              <textarea
+                value={pasteCodesText}
+                onChange={(e) => setPasteCodesText(e.target.value)}
+                rows={4}
+                placeholder={"TEST001\nTEST002\nTEST003\n..."}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono"
+              />
+              <button
+                type="button"
+                onClick={handlePasteLookup}
+                disabled={pasteLookupLoading || !pasteCodesText.trim()}
+                className="rounded-md border border-slate-300 text-sm px-3 py-1.5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {pasteLookupLoading ? "Đang tra cứu..." : "Tra cứu & thêm vào danh sách chọn"}
+              </button>
+              {pasteLookupNotice && (
+                <p className="text-xs text-slate-500">{pasteLookupNotice}</p>
+              )}
+            </div>
+          </details>
+
+          <button
+            onClick={handleAssignExisting}
+            disabled={assigning || selectedStudentIds.size === 0}
+            className="rounded-md bg-slate-900 text-white text-sm font-medium px-4 py-2 hover:bg-slate-800 disabled:opacity-50"
+          >
+            {assigning
+              ? "Đang gán..."
+              : `Gán ${selectedStudentIds.size || ""} thí sinh đã chọn`}
+          </button>
+        </div>
       )}
 
       {showGenerateForm && (

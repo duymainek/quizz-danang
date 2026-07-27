@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { data, error } = await db
       .from("exams")
       .select(
-        "*, subjects(name), exam_pool_configs(id, pool_id, num_questions_to_draw, question_pools(name, questions(count))), student_codes(status)"
+        "*, exam_pool_configs(id, pool_id, num_questions_to_draw, question_pools(name, questions(count))), exam_assignments(status)"
       )
       .eq("id", id)
       .single();
@@ -24,7 +24,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
     // Chỉ khóa sửa/xóa khi có mã ĐÃ ĐƯỢC DÙNG (đang thi/đã nộp) — mã vừa sinh
     // nhưng chưa ai dùng thì vẫn sửa thoải mái (VD admin đang test/chuẩn bị).
-    const studentCodes = (data.student_codes ?? []) as { status: string }[];
+    const studentCodes = (data.exam_assignments ?? []) as { status: string }[];
     const usedCodesCount = studentCodes.filter(
       (c) => c.status === "in_progress" || c.status === "submitted"
     ).length;
@@ -39,7 +39,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 async function assertNoStudentCodes(db: ReturnType<typeof createAdminClient>, examId: string) {
   const { count, error } = await db
-    .from("student_codes")
+    .from("exam_assignments")
     .select("id", { count: "exact", head: true })
     .eq("exam_id", examId)
     .in("status", ["in_progress", "submitted"]);
@@ -53,7 +53,7 @@ async function assertNoStudentCodes(db: ReturnType<typeof createAdminClient>, ex
 
 async function assertNoAnyStudentCodes(db: ReturnType<typeof createAdminClient>, examId: string) {
   const { count, error } = await db
-    .from("student_codes")
+    .from("exam_assignments")
     .select("id", { count: "exact", head: true })
     .eq("exam_id", examId);
   if (error) throw error;
@@ -79,7 +79,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const poolIds = body.pool_configs.map((c) => c.pool_id);
     const { data: pools, error: poolsErr } = await db
       .from("question_pools")
-      .select("id, subject_id, name, questions(count)")
+      .select("id, name, questions(count)")
       .in("id", poolIds);
     if (poolsErr) throw poolsErr;
 
@@ -87,9 +87,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     for (const cfg of body.pool_configs) {
       const pool = poolById.get(cfg.pool_id);
       if (!pool) return jsonError(`Không tìm thấy tệp câu hỏi ${cfg.pool_id}`, 422);
-      if (pool.subject_id !== body.subject_id) {
-        return jsonError(`Tệp "${pool.name}" không thuộc môn thi đã chọn`, 422);
-      }
       const available = pool.questions?.[0]?.count ?? 0;
       if (cfg.num_questions_to_draw > available) {
         return jsonError(
@@ -102,7 +99,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const { data: exam, error: examErr } = await db
       .from("exams")
       .update({
-        subject_id: body.subject_id,
         name: body.name,
         duration_minutes: body.duration_minutes,
         max_violations: body.max_violations,
@@ -110,6 +106,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         scoring_mode: body.scoring_mode,
         scale: body.scale,
         is_active: body.is_active,
+        publish_score: body.publish_score,
       })
       .eq("id", id)
       .select()

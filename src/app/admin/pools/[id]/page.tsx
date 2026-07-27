@@ -97,7 +97,7 @@ export default function PoolDetailPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href="../.." className="text-sm text-slate-500 hover:underline">
+        <Link href="/admin/pools" className="text-sm text-slate-500 hover:underline">
           ← Danh sách tệp câu hỏi
         </Link>
         <div className="flex items-center justify-between mt-1">

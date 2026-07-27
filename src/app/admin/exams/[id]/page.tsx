@@ -10,7 +10,6 @@ type ExamDetail = ExamFormValue & {
   is_active: boolean;
   student_codes_count: number;
   used_codes_count: number;
-  subjects: { name: string } | null;
   exam_pool_configs: {
     pool_id: string;
     num_questions_to_draw: number;
@@ -141,13 +140,13 @@ export default function ExamDetailPage({
         )}
         <ExamForm
           initial={{
-            subject_id: exam.subject_id,
             name: exam.name,
             duration_minutes: exam.duration_minutes,
             max_violations: exam.max_violations,
             monitoring_enabled: exam.monitoring_enabled,
             scoring_mode: exam.scoring_mode,
             scale: exam.scale,
+            publish_score: exam.publish_score,
             pool_configs: exam.exam_pool_configs.map((c) => ({
               pool_id: c.pool_id,
               num_questions_to_draw: c.num_questions_to_draw,
@@ -184,7 +183,6 @@ export default function ExamDetailPage({
               {exam.is_active ? "Đang mở cho thí sinh" : "Chưa mở"}
             </span>
           </div>
-          <p className="text-sm text-slate-500">{exam.subjects?.name}</p>
         </div>
         <div className="flex gap-2">
           <button

@@ -16,11 +16,23 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { data: session, error: sessionErr } = await db
       .from("exam_sessions")
       .select(
-        "id, started_at, submitted_at, status, violation_count, student_codes(code, student_name), exams(name, duration_minutes)"
+        "id, started_at, submitted_at, status, violation_count, exam_assignment_id, exams(name, duration_minutes)"
       )
       .eq("id", sessionId)
       .single();
     if (sessionErr || !session) return jsonError("Không tìm thấy lượt thi", 404);
+
+    // Tách truy vấn lấy thông tin thí sinh thay vì embed 2 tầng qua bảng
+    // trung gian exam_assignments — nhất quán với cách xử lý embed sâu ở nơi khác.
+    const { data: assignment } = await db
+      .from("exam_assignments")
+      .select("students(code, full_name)")
+      .eq("id", session.exam_assignment_id)
+      .single();
+    const student = (assignment?.students ?? null) as unknown as {
+      code: string;
+      full_name: string | null;
+    } | null;
 
     const { data: score, error: scoreErr } = await db
       .from("scores")
@@ -32,7 +44,13 @@ export async function GET(_req: NextRequest, { params }: Params) {
     // Cột numeric trả về dạng string qua PostgREST — ép kiểu Number trước khi trả về frontend.
     const normalizedScore = score ? { ...score, total_score: Number(score.total_score) } : null;
 
-    return NextResponse.json({ session, score: normalizedScore });
+    return NextResponse.json({
+      session: {
+        ...session,
+        student_codes: { code: student?.code ?? "", student_name: student?.full_name ?? null },
+      },
+      score: normalizedScore,
+    });
   } catch (err) {
     return handleApiError(err);
   }

@@ -13,10 +13,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
     idParamSchema.parse(examId);
     const db = createAdminClient();
 
-    const { data: codes, error } = await db
-      .from("student_codes")
+    const { data: assignments, error } = await db
+      .from("exam_assignments")
       .select(
-        "id, code, student_name, status, exam_sessions(id, started_at, submitted_at, status, violation_count, created_at)"
+        "id, status, created_at, students(code, full_name), exam_sessions(id, started_at, submitted_at, status, violation_count, created_at)"
       )
       .eq("exam_id", examId)
       .order("created_at", { ascending: true });
@@ -31,11 +31,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
       created_at: string;
     };
 
-    // Lấy điểm bằng 1 truy vấn riêng thay vì embed 3 tầng qua PostgREST —
-    // tách rõ ràng, dễ debug, và tránh phụ thuộc cách PostgREST suy luận
-    // quan hệ FK gián tiếp qua bảng trung gian.
-    const allSessionIds = (codes ?? [])
-      .flatMap((c) => (c.exam_sessions ?? []) as SessionRow[])
+    const allSessionIds = (assignments ?? [])
+      .flatMap((a) => (a.exam_sessions ?? []) as SessionRow[])
       .map((s) => s.id);
 
     const scoreBySessionId = new Map<string, number>();
@@ -46,15 +43,15 @@ export async function GET(_req: NextRequest, { params }: Params) {
         .in("session_id", allSessionIds);
       if (scoresErr) throw scoresErr;
       for (const s of scores ?? []) {
-        // Cột numeric trả về dạng string qua PostgREST — luôn ép kiểu Number.
         scoreBySessionId.set(s.session_id, Number(s.total_score));
       }
     }
 
-    const rows = (codes ?? []).map((c) => {
-      const sessions = (c.exam_sessions ?? []) as SessionRow[];
+    const rows = (assignments ?? []).map((a) => {
+      const student = a.students as unknown as { code: string; full_name: string | null } | null;
+      const sessions = (a.exam_sessions ?? []) as SessionRow[];
       const latest = sessions.sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        (x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime()
       )[0];
       const durationSeconds =
         latest?.submitted_at && latest?.started_at
@@ -65,10 +62,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
           : null;
 
       return {
-        student_code_id: c.id,
-        code: c.code,
-        student_name: c.student_name,
-        status: c.status,
+        student_code_id: a.id,
+        code: student?.code ?? "",
+        student_name: student?.full_name ?? null,
+        status: a.status,
         session_id: latest?.id ?? null,
         session_status: latest?.status ?? null,
         total_score: latest ? scoreBySessionId.get(latest.id) ?? null : null,

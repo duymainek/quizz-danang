@@ -15,7 +15,7 @@ export async function GET() {
     const { data, error } = await db
       .from("exams")
       .select(
-        "id, name, duration_minutes, monitoring_enabled, subjects(name), exam_pool_configs(num_questions_to_draw)"
+        "id, name, duration_minutes, monitoring_enabled, exam_pool_configs(num_questions_to_draw)"
       )
       .eq("is_active", true)
       .order("created_at", { ascending: false });
@@ -24,7 +24,6 @@ export async function GET() {
     const exams = (data ?? []).map((e) => ({
       id: e.id,
       name: e.name,
-      subject_name: (e.subjects as unknown as { name: string } | null)?.name ?? null,
       duration_minutes: e.duration_minutes,
       monitoring_enabled: e.monitoring_enabled,
       total_questions: (e.exam_pool_configs ?? []).reduce(

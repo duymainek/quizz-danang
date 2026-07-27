@@ -1,40 +1,43 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 
-type Subject = {
+type Pool = {
   id: string;
   name: string;
   created_at: string;
-  question_pools: { count: number }[];
+  questions: { count: number }[];
 };
 
-export default function SubjectsPage() {
-  const [subjects, setSubjects] = useState<Subject[]>([]);
+export default function PoolsPage() {
+  const [pools, setPools] = useState<Pool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  async function load() {
+  const load = useCallback(async (query: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/subjects");
+      const url = query ? `/api/admin/pools?q=${encodeURIComponent(query)}` : "/api/admin/pools";
+      const res = await fetch(url);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      setSubjects(json.subjects);
+      setPools(json.pools);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Có lỗi xảy ra");
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    load();
-  }, []);
+    const t = setTimeout(() => load(q), 300);
+    return () => clearTimeout(t);
+  }, [q, load]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -42,15 +45,15 @@ export default function SubjectsPage() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/subjects", {
+      const res = await fetch("/api/admin/pools", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name: name.trim() }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       setName("");
-      await load();
+      await load(q);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Có lỗi xảy ra");
     } finally {
@@ -59,22 +62,24 @@ export default function SubjectsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Xóa môn thi này? Không thể hoàn tác.")) return;
-    const res = await fetch(`/api/admin/subjects/${id}`, { method: "DELETE" });
+    if (!confirm("Xóa tệp câu hỏi này? Toàn bộ câu hỏi trong tệp sẽ bị xóa.")) return;
+    const res = await fetch(`/api/admin/pools/${id}`, { method: "DELETE" });
     const json = await res.json();
     if (!res.ok) {
       alert(json.error);
       return;
     }
-    await load();
+    await load(q);
   }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">Môn thi</h1>
+        <h1 className="text-xl font-semibold text-slate-900">Ngân hàng câu hỏi</h1>
         <p className="text-sm text-slate-500">
-          Mỗi môn có ngân hàng câu hỏi riêng, tổ chức theo các tệp câu hỏi.
+          Mỗi tệp là 1 nhóm câu hỏi. Khi tạo đề thi, chọn 1 hoặc nhiều tệp và cấu hình số câu
+          lấy từ mỗi tệp (lấy hết = cố định, lấy ít hơn tổng số câu = rút ngẫu nhiên riêng cho
+          từng thí sinh).
         </p>
       </div>
 
@@ -82,7 +87,7 @@ export default function SubjectsPage() {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Tên môn thi mới, VD: Kiến thức chung"
+          placeholder="Tên tệp mới, VD: Tệp 1 — Kiến thức chung"
           className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
         <button
@@ -93,6 +98,13 @@ export default function SubjectsPage() {
         </button>
       </form>
 
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Tìm theo tên tệp..."
+        className="w-full max-w-sm rounded-md border border-slate-300 px-3 py-2 text-sm"
+      />
+
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
           {error}
@@ -101,25 +113,25 @@ export default function SubjectsPage() {
 
       {loading ? (
         <p className="text-sm text-slate-500">Đang tải...</p>
-      ) : subjects.length === 0 ? (
-        <p className="text-sm text-slate-500">Chưa có môn thi nào.</p>
+      ) : pools.length === 0 ? (
+        <p className="text-sm text-slate-500">Chưa có tệp câu hỏi nào.</p>
       ) : (
         <ul className="divide-y divide-slate-200 border border-slate-200 rounded-lg bg-white">
-          {subjects.map((s) => (
-            <li key={s.id} className="flex items-center justify-between px-4 py-3">
+          {pools.map((p) => (
+            <li key={p.id} className="flex items-center justify-between px-4 py-3">
               <div>
                 <Link
-                  href={`/admin/subjects/${s.id}`}
+                  href={`/admin/pools/${p.id}`}
                   className="font-medium text-slate-900 hover:underline"
                 >
-                  {s.name}
+                  {p.name}
                 </Link>
                 <p className="text-xs text-slate-500">
-                  {s.question_pools?.[0]?.count ?? 0} tệp câu hỏi
+                  {p.questions?.[0]?.count ?? 0} câu hỏi
                 </p>
               </div>
               <button
-                onClick={() => handleDelete(s.id)}
+                onClick={() => handleDelete(p.id)}
                 className="text-sm text-red-600 hover:underline"
               >
                 Xóa

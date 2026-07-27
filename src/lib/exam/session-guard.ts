@@ -14,7 +14,7 @@ export class ExamSessionError extends Error {
 
 type ExamSessionRow = {
   id: string;
-  student_code_id: string;
+  exam_assignment_id: string;
   exam_id: string;
   snapshot_questions: unknown;
   session_token_hash: string;
@@ -28,11 +28,26 @@ type ExamSessionRow = {
     monitoring_enabled: boolean;
     name: string;
   };
-  student_codes: {
-    code: string;
-    student_name: string | null;
-  };
 };
+
+const SELECT_FIELDS =
+  "id, exam_assignment_id, exam_id, snapshot_questions, session_token_hash, started_at, submitted_at, status, violation_count, exams(duration_minutes, max_violations, monitoring_enabled, name)";
+
+/** Lấy tên/mã thí sinh qua exam_assignment — tách truy vấn riêng thay vì embed
+ * 2 tầng (exam_sessions -> exam_assignments -> students) để nhất quán với
+ * cách đã xử lý các lỗi PostgREST embed sâu trước đây trong dự án. */
+async function fetchStudentInfo(db: ReturnType<typeof createAdminClient>, examAssignmentId: string) {
+  const { data } = await db
+    .from("exam_assignments")
+    .select("students(code, full_name)")
+    .eq("id", examAssignmentId)
+    .single();
+  const student = (data?.students ?? null) as unknown as {
+    code: string;
+    full_name: string | null;
+  } | null;
+  return { code: student?.code ?? "", student_name: student?.full_name ?? null };
+}
 
 /**
  * Đọc cookie phiên thi, xác thực token, và tự động chuyển session sang
@@ -40,7 +55,7 @@ type ExamSessionRow = {
  * luôn là server, không tin client). Mọi API /exam/* dùng chung hàm này.
  */
 export async function resolveExamSession(): Promise<{
-  session: ExamSessionRow;
+  session: ExamSessionRow & { student: { code: string; student_name: string | null } };
   db: ReturnType<typeof createAdminClient>;
 }> {
   const cookieStore = await cookies();
@@ -50,9 +65,7 @@ export async function resolveExamSession(): Promise<{
   const db = createAdminClient();
   const { data: session, error } = await db
     .from("exam_sessions")
-    .select(
-      "id, student_code_id, exam_id, snapshot_questions, session_token_hash, started_at, submitted_at, status, violation_count, exams(duration_minutes, max_violations, monitoring_enabled, name), student_codes(code, student_name)"
-    )
+    .select(SELECT_FIELDS)
     .eq("id", parsed.sessionId)
     .single();
 
@@ -63,7 +76,7 @@ export async function resolveExamSession(): Promise<{
     throw new ExamSessionError("Phiên thi không hợp lệ");
   }
 
-  const examSessionRow = session as unknown as ExamSessionRow;
+  let examSessionRow = session as unknown as ExamSessionRow;
 
   if (examSessionRow.status === "in_progress") {
     const startedAt = new Date(examSessionRow.started_at).getTime();
@@ -75,24 +88,27 @@ export async function resolveExamSession(): Promise<{
         .update({ status: "auto_submitted", submitted_at: new Date().toISOString() })
         .eq("id", examSessionRow.id)
         .eq("status", "in_progress") // tránh ghi đè nếu đã có request khác submit trước
-        .select(
-          "id, student_code_id, exam_id, snapshot_questions, session_token_hash, started_at, submitted_at, status, violation_count, exams(duration_minutes, max_violations, monitoring_enabled, name), student_codes(code, student_name)"
-        )
+        .select(SELECT_FIELDS)
         .single();
       if (!updateErr && updated) {
-        return { session: updated as unknown as ExamSessionRow, db };
+        examSessionRow = updated as unknown as ExamSessionRow;
+      } else {
+        // Nếu update không trúng row (đã có request khác submit trước) — đọc lại state mới nhất.
+        const { data: latest } = await db
+          .from("exam_sessions")
+          .select(SELECT_FIELDS)
+          .eq("id", examSessionRow.id)
+          .single();
+        if (latest) examSessionRow = latest as unknown as ExamSessionRow;
       }
-      // Nếu update không trúng row (đã có request khác submit trước) — đọc lại state mới nhất.
-      const { data: latest } = await db
-        .from("exam_sessions")
-        .select(
-          "id, student_code_id, exam_id, snapshot_questions, session_token_hash, started_at, submitted_at, status, violation_count, exams(duration_minutes, max_violations, monitoring_enabled, name), student_codes(code, student_name)"
-        )
-        .eq("id", examSessionRow.id)
-        .single();
-      if (latest) return { session: latest as unknown as ExamSessionRow, db };
+      await db
+        .from("exam_assignments")
+        .update({ status: "submitted" })
+        .eq("id", examSessionRow.exam_assignment_id)
+        .neq("status", "submitted");
     }
   }
 
-  return { session: examSessionRow, db };
+  const student = await fetchStudentInfo(db, examSessionRow.exam_assignment_id);
+  return { session: { ...examSessionRow, student }, db };
 }
