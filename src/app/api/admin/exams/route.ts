@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUser } from "@/lib/auth";
+import { requireAdminUser, requirePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError, jsonError } from "@/lib/api-helpers";
 import { examInputSchema } from "@/lib/validation/exam";
+import { getCurrentTermId } from "@/lib/terms";
 
 export async function GET() {
   try {
     await requireAdminUser();
     const db = createAdminClient();
+    const termId = await getCurrentTermId(db);
 
     const { data, error } = await db
       .from("exams")
       .select(
         "id, name, duration_minutes, max_violations, monitoring_enabled, is_active, publish_score, created_at, exam_pool_configs(num_questions_to_draw), exam_assignments(count)"
       )
+      .eq("term_id", termId)
       .order("created_at", { ascending: false });
     if (error) throw error;
 
@@ -34,7 +37,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdminUser();
+    await requirePermission("manage_exams");
     const body = examInputSchema.parse(await req.json());
     const db = createAdminClient();
 
@@ -59,9 +62,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const termId = await getCurrentTermId(db);
     const { data: exam, error: examErr } = await db
       .from("exams")
       .insert({
+        term_id: termId,
         name: body.name,
         duration_minutes: body.duration_minutes,
         max_violations: body.max_violations,

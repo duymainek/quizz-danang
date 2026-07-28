@@ -3,6 +3,7 @@
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ExamTabs } from "@/components/admin/ExamTabs";
 import { ExamForm, type ExamFormValue } from "@/components/admin/ExamForm";
 
 type ExamDetail = ExamFormValue & {
@@ -170,6 +171,7 @@ export default function ExamDetailPage({
       <Link href="/admin/exams" className="text-sm text-slate-500 hover:underline">
         ← Danh sách đề thi
       </Link>
+      <ExamTabs examId={id} active="config" />
 
       <div className="flex items-start justify-between">
         <div>

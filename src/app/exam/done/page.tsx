@@ -35,14 +35,37 @@ function DoneContent() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl p-6 text-center space-y-4 shadow-sm">
-        <div
-          className={`mx-auto h-14 w-14 rounded-full flex items-center justify-center text-2xl ${
-            isViolation ? "bg-amber-100 text-amber-600" : "bg-emerald-100 text-emerald-600"
-          }`}
-        >
-          {isViolation ? "!" : "✓"}
-        </div>
+      <div className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl p-6 text-center space-y-4 shadow-sm animate-scale-in">
+        {isViolation ? (
+          <div className="mx-auto h-14 w-14 rounded-full flex items-center justify-center text-2xl bg-amber-100 text-amber-600 animate-shake-once">
+            !
+          </div>
+        ) : (
+          /* Checkmark vẽ nét — vòng tròn trước, tick sau (stroke-dashoffset). */
+          <svg
+            className="mx-auto h-14 w-14 text-emerald-500"
+            viewBox="0 0 56 56"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              className="checkmark-circle"
+              cx="28"
+              cy="28"
+              r="26"
+              stroke="currentColor"
+              strokeWidth="3"
+            />
+            <path
+              className="checkmark-check"
+              d="M17 29l8 8 15-16"
+              stroke="currentColor"
+              strokeWidth="4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
         <h1 className="text-lg font-semibold text-slate-900">
           {isViolation ? "Bài thi đã bị nộp tự động" : "Đã nộp bài"}
         </h1>

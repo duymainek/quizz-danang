@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUser } from "@/lib/auth";
+import { requireAdminUser, requirePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError, jsonError } from "@/lib/api-helpers";
 import { idParamSchema } from "@/lib/validation/common";
@@ -68,7 +68,7 @@ class EditBlockedError extends Error {}
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
-    await requireAdminUser();
+    await requirePermission("manage_exams");
     const { id } = await params;
     idParamSchema.parse(id);
     const body = examInputSchema.parse(await req.json());
@@ -134,7 +134,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    await requireAdminUser();
+    await requirePermission("manage_exams");
     const { id } = await params;
     idParamSchema.parse(id);
     const db = createAdminClient();

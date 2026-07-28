@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError, jsonError } from "@/lib/api-helpers";
 import { idParamSchema } from "@/lib/validation/common";
@@ -8,7 +8,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function POST(_req: NextRequest, { params }: Params) {
   try {
-    const admin = await requireAdminUser();
+    const { user: admin } = await requirePermission("ops_day");
     const { id } = await params;
     idParamSchema.parse(id);
     const db = createAdminClient();

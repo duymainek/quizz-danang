@@ -14,7 +14,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const db = createAdminClient();
     const { data, error } = await db
       .from("violation_logs")
-      .select("id, type, created_at")
+      .select("id, type, created_at, dismissed")
       .eq("session_id", sessionId)
       .order("created_at", { ascending: false });
     if (error) throw error;

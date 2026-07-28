@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
+import { useCachedFetch } from "@/lib/use-cached-fetch";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type Student = {
   id: string;
@@ -11,9 +14,8 @@ type Student = {
 };
 
 export default function StudentsPage() {
-  const [students, setStudents] = useState<Student[]>([]);
-  const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
@@ -21,26 +23,18 @@ export default function StudentsPage() {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
 
-  const load = useCallback(async (query: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const url = query ? `/api/admin/students?q=${encodeURIComponent(query)}` : "/api/admin/students";
-      const res = await fetch(url);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
-      setStudents(json.students);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Có lỗi xảy ra");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Debounce từ khóa tìm kiếm rồi để cache hook tự fetch theo URL.
   useEffect(() => {
-    const t = setTimeout(() => load(q), 300);
+    const t = setTimeout(() => setDebouncedQ(q), 300);
     return () => clearTimeout(t);
-  }, [q, load]);
+  }, [q]);
+  const { data, reload, isLoading: loading } = useCachedFetch<{ students: Student[] }>(
+    debouncedQ
+      ? `/api/admin/students?q=${encodeURIComponent(debouncedQ)}`
+      : "/api/admin/students"
+  );
+  const students = data?.students ?? [];
+  const load = useCallback(async (_query?: string) => reload(), [reload]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -153,7 +147,11 @@ export default function StudentsPage() {
       />
 
       {loading ? (
-        <p className="text-sm text-slate-500">Đang tải...</p>
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-11 w-full animate-shimmer" />
+          ))}
+        </div>
       ) : students.length === 0 ? (
         <p className="text-sm text-slate-500">Chưa có thí sinh nào.</p>
       ) : (
@@ -170,7 +168,11 @@ export default function StudentsPage() {
             <tbody className="divide-y divide-slate-100">
               {students.map((s) => (
                 <tr key={s.id}>
-                  <td className="px-4 py-2 font-mono text-slate-900">{s.code}</td>
+                  <td className="px-4 py-2 font-mono">
+                    <Link href={`/admin/students/${s.id}`} className="text-primary hover:underline">
+                      {s.code}
+                    </Link>
+                  </td>
                   <td className="px-4 py-2 text-slate-700">
                     {s.full_name || <span className="text-slate-400">—</span>}
                   </td>

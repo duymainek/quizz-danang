@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+
+import { useCachedFetch } from "@/lib/use-cached-fetch";
+import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 
 type Exam = {
@@ -15,28 +17,22 @@ type Exam = {
 };
 
 export default function ExamsPage() {
-  const [exams, setExams] = useState<Exam[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Cache: quay lại trang hiện data ngay, revalidate nền.
+  const { data, error, reload, isLoading: loading } = useCachedFetch<{ exams: Exam[] }>(
+    "/api/admin/exams"
+  );
+  const exams = data?.exams ?? [];
+  const load = reload;
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/admin/exams");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
-      setExams(json.exams);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Có lỗi xảy ra");
-    } finally {
-      setLoading(false);
+  async function handleDuplicate(id: string) {
+    const res = await fetch(`/api/admin/exams/${id}/duplicate`, { method: "POST" });
+    const json = await res.json();
+    if (!res.ok) {
+      alert(json.error);
+      return;
     }
+    await load();
   }
-
-  useEffect(() => {
-    load();
-  }, []);
 
   async function handleDelete(id: string) {
     if (!confirm("Xóa đề thi này?")) return;
@@ -73,7 +69,11 @@ export default function ExamsPage() {
       )}
 
       {loading ? (
-        <p className="text-sm text-slate-500">Đang tải...</p>
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 w-full animate-shimmer" />
+          ))}
+        </div>
       ) : exams.length === 0 ? (
         <p className="text-sm text-slate-500">Chưa có đề thi nào.</p>
       ) : (
@@ -104,14 +104,23 @@ export default function ExamsPage() {
                   {e.student_codes_count} mã số đã sinh
                 </p>
               </div>
-              {e.student_codes_count === 0 && (
+              <div className="flex items-center gap-3 shrink-0">
                 <button
-                  onClick={() => handleDelete(e.id)}
-                  className="text-sm text-red-600 hover:underline"
+                  onClick={() => handleDuplicate(e.id)}
+                  className="text-sm text-slate-500 hover:text-slate-900 hover:underline"
+                  title="Tạo bản sao cấu hình đề (không copy thí sinh/kết quả)"
                 >
-                  Xóa
+                  Nhân bản
                 </button>
-              )}
+                {e.student_codes_count === 0 && (
+                  <button
+                    onClick={() => handleDelete(e.id)}
+                    className="text-sm text-red-600 hover:underline"
+                  >
+                    Xóa
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>

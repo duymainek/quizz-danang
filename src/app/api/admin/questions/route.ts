@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUser } from "@/lib/auth";
+import { requireAdminUser, requirePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError, jsonError } from "@/lib/api-helpers";
 import { questionInputSchema } from "@/lib/validation/question";
@@ -30,7 +30,7 @@ const createQuestionSchema = questionInputSchema.and(
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdminUser();
+    await requirePermission("manage_questions");
     const raw = await req.json();
     const body = createQuestionSchema.parse(raw);
     const db = createAdminClient();

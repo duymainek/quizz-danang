@@ -15,7 +15,8 @@ export async function GET() {
       .eq("session_id", session.id);
 
     const deadline =
-      new Date(session.started_at).getTime() + session.exams.duration_minutes * 60_000;
+      new Date(session.started_at).getTime() +
+      (session.exams.duration_minutes + (session.extra_minutes ?? 0)) * 60_000;
 
     return NextResponse.json({
       status: session.status,

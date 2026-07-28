@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError } from "@/lib/api-helpers";
 import { idParamSchema } from "@/lib/validation/common";
@@ -9,7 +9,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
-    await requireAdminUser();
+    await requirePermission("manage_questions");
     const { id } = await params;
     idParamSchema.parse(id);
     const body = questionInputSchema.parse(await req.json());
@@ -36,7 +36,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    await requireAdminUser();
+    await requirePermission("manage_questions");
     const { id } = await params;
     idParamSchema.parse(id);
     const db = createAdminClient();

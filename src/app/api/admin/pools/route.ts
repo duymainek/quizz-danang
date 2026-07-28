@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdminUser } from "@/lib/auth";
+import { requireAdminUser, requirePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError } from "@/lib/api-helpers";
 
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdminUser();
+    await requirePermission("manage_questions");
     const body = createPoolSchema.parse(await req.json());
     const db = createAdminClient();
     const { data, error } = await db

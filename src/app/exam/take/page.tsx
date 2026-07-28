@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { OfflineSync, type SaveState } from "@/lib/exam/offline-sync";
 
 /**
  * Ghi log âm thầm (fire-and-forget) — không await ở nơi gọi, không throw,
@@ -58,10 +59,20 @@ export default function ExamTakePage() {
   const [warning, setWarning] = useState<{ message: string; remaining: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
   const submittedRef = useRef(false);
   const lastViolationAtRef = useRef<Record<string, number>>({});
   const questionRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const failedSaveQuestionsRef = useRef<Set<string>>(new Set());
+  const syncRef = useRef<OfflineSync | null>(null);
+
+  /** Log qua offline queue nếu đã init, fallback fire-and-forget lúc chưa init. */
+  const log = useCallback((type: string, payload: Record<string, unknown> = {}) => {
+    if (syncRef.current) syncRef.current.logEvent(type, payload);
+    else logEvent(type, payload);
+  }, []);
 
   const loadSession = useCallback(async () => {
     setLoading(true);
@@ -75,13 +86,31 @@ export default function ExamTakePage() {
       }
       setData(json);
       setActiveId(json.questions?.[0]?.id ?? null);
-      setAnswers(
-        Object.fromEntries(
-          (json.answers as { question_id: string; selected_options: number[] }[]).map(
-            (a) => [a.question_id, a.selected_options]
-          )
+
+      // P1 — Khởi tạo offline sync theo mã thí sinh (1 phiên active / thí sinh).
+      const sync = syncRef.current ?? new OfflineSync(json.student.code);
+      syncRef.current = sync;
+      sync.onState(setSaveState);
+
+      const serverAnswers = Object.fromEntries(
+        (json.answers as { question_id: string; selected_options: number[] }[]).map(
+          (a) => [a.question_id, a.selected_options]
         )
       );
+      // Merge đáp án dirty từ phiên trước (chọn lúc mất mạng rồi thoát) —
+      // local override server vì là lựa chọn mới hơn, đồng thời gửi bù ngay.
+      const dirty = sync.getDirtyAnswers();
+      for (const d of dirty) {
+        if (json.questions.some((q: Question) => q.id === d.question_id)) {
+          serverAnswers[d.question_id] = d.selected_options;
+        }
+      }
+      setAnswers(serverAnswers);
+      if (dirty.length > 0) {
+        sync.logEvent("offline_answers_recovered", { count: dirty.length });
+        void sync.flushAll();
+      }
+
       logEvent("session_loaded", {
         total_questions: json.questions?.length ?? 0,
         already_answered: (json.answers ?? []).length,
@@ -160,23 +189,30 @@ export default function ExamTakePage() {
         remaining: json.remaining,
       });
     } catch {
-      // Mất mạng lúc gửi log vi phạm — bỏ qua, không chặn thí sinh làm bài tiếp.
+      // Mất mạng lúc gửi vi phạm — không chặn thí sinh; ghi vào offline queue
+      // (FIFO, có seq) để server vẫn nhận được bản ghi đúng thứ tự khi có mạng.
+      syncRef.current?.logEvent("violation_send_failed", { violation_type: type });
     }
   }, [router]);
+
+  // Hủy timer/listener của offline sync khi rời trang.
+  useEffect(() => {
+    return () => syncRef.current?.destroy();
+  }, []);
 
   // Theo dõi mất/có mạng — chỉ để log lại mốc thời gian, không tự làm gì
   // khác (autosave đã tự retry ở lần chọn tiếp theo, submit tự retry qua nút).
   useEffect(() => {
     if (!data) return;
-    const onOnline = () => logEvent("network_online");
-    const onOffline = () => logEvent("network_offline");
+    const onOnline = () => log("network_online");
+    const onOffline = () => log("network_offline");
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     return () => {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
     };
-  }, [data]);
+  }, [data, log]);
 
   useEffect(() => {
     if (!data) return;
@@ -214,25 +250,20 @@ export default function ExamTakePage() {
 
   async function saveAnswer(questionId: string, selected: number[]) {
     setAnswers((a) => ({ ...a, [questionId]: selected }));
-    try {
-      const res = await fetch("/api/exam/answer", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question_id: questionId, selected_options: selected }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const sync = syncRef.current;
+    if (!sync) return;
+    // P1 — lưu localStorage trước, gửi API sau; lỗi thì tự retry backoff.
+    const ok = await sync.saveAnswer(questionId, selected);
+    if (ok) {
       if (failedSaveQuestionsRef.current.has(questionId)) {
         failedSaveQuestionsRef.current.delete(questionId);
-        logEvent("answer_save_recovered", { question_id: questionId });
+        sync.logEvent("answer_save_recovered", { question_id: questionId });
       }
-    } catch (e) {
-      // Lưu local vẫn giữ nguyên, sẽ gửi lại lần chọn tiếp theo hoặc khi nộp bài.
-      // Ghi log lại để admin trace được nếu thí sinh khiếu nại mất đáp án do mạng.
+    } else {
       failedSaveQuestionsRef.current.add(questionId);
-      logEvent("answer_save_failed", {
+      sync.logEvent("answer_save_failed", {
         question_id: questionId,
         selected_options: selected,
-        error: e instanceof Error ? e.message : String(e),
         online: typeof navigator !== "undefined" ? navigator.onLine : null,
       });
     }
@@ -249,7 +280,7 @@ export default function ExamTakePage() {
         ? current.filter((i) => i !== optionIdx)
         : [...current, optionIdx].sort();
     }
-    logEvent(isFirstSelect ? "answer_first_select" : "answer_change", {
+    log(isFirstSelect ? "answer_first_select" : "answer_change", {
       question_id: question.id,
       previous_selected: current,
       new_selected: next,
@@ -268,20 +299,35 @@ export default function ExamTakePage() {
     // thống hiểu nhầm thành hành vi vi phạm ngay khi thí sinh đang nộp bài
     // hợp lệ. Dùng modal tự vẽ (showSubmitConfirm) thay thế.
     const answeredCount = Object.keys(answers).filter((k) => (answers[k]?.length ?? 0) > 0).length;
-    logEvent("submit_attempt", {
+    setSubmitting(true);
+    setSubmitError(false);
+    log("submit_attempt", {
       auto,
       answered_count: answeredCount,
       total_questions: data?.questions.length ?? 0,
       pending_failed_saves: Array.from(failedSaveQuestionsRef.current),
     });
     try {
+      // P1 — flush hết đáp án dirty trước khi nộp (best-effort, không chặn quá lâu).
+      await syncRef.current?.flushAll();
+      // Submit LUÔN realtime — chỉ coi là đã nộp khi server xác nhận.
       const res = await fetch("/api/exam/submit", { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      logEvent("submit_success", { auto });
-    } catch (e) {
-      logEvent("submit_error", { auto, error: e instanceof Error ? e.message : String(e) });
-    } finally {
+      log("submit_success", { auto });
+      syncRef.current?.clear();
       router.replace(`/exam/done?reason=${auto ? "timeout" : "manual"}`);
+    } catch (e) {
+      // Mất mạng lúc nộp: giữ nguyên màn hình làm bài, banner + tự thử lại.
+      log("submit_error", { auto, error: e instanceof Error ? e.message : String(e) });
+      submittedRef.current = false;
+      setSubmitting(false);
+      setSubmitError(true);
+      setTimeout(() => {
+        if (!submittedRef.current) {
+          submittedRef.current = true;
+          void handleSubmit(auto);
+        }
+      }, 4000);
     }
   }
 
@@ -317,12 +363,35 @@ export default function ExamTakePage() {
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <header className="sticky top-0 z-10 bg-slate-900 text-white">
         <div className="px-4 py-2 flex items-center justify-between text-sm">
-          <span className={`font-mono font-semibold ${timeColor}`}>
+          <span
+            className={`font-mono font-semibold ${timeColor} ${
+              timeLeftMs <= 60_000 ? "animate-timer-pulse" : ""
+            }`}
+          >
             {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")} còn lại
           </span>
-          <button onClick={() => setShowGrid(true)} className="underline">
-            Đã làm {answeredCount}/{data.questions.length} câu
-          </button>
+          <div className="flex items-center gap-3">
+            {/* P1 — chỉ báo autosave nhỏ, không xâm lấn */}
+            <span
+              className="text-xs transition-opacity duration-300"
+              title={
+                saveState === "saved"
+                  ? "Đã lưu"
+                  : saveState === "saving"
+                    ? "Đang lưu"
+                    : "Mất kết nối — đang thử lại"
+              }
+            >
+              {saveState === "saved" && <span className="text-emerald-400">✓ Đã lưu</span>}
+              {saveState === "saving" && <span className="text-slate-300">Đang lưu…</span>}
+              {saveState === "offline" && (
+                <span className="text-amber-400 animate-soft-pulse">Mất kết nối</span>
+              )}
+            </span>
+            <button onClick={() => setShowGrid(true)} className="underline">
+              Đã làm {answeredCount}/{data.questions.length} câu
+            </button>
+          </div>
         </div>
         <div className="px-4 pb-2 text-xs text-slate-300 truncate">
           {data.student.student_name || "Chưa có tên"} · SBD{" "}
@@ -358,12 +427,30 @@ export default function ExamTakePage() {
       </header>
 
       {warning && (
-        <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700 flex items-center justify-between">
-          <span>
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700 flex items-center justify-between animate-slide-down">
+          <span className="flex items-center gap-2">
+            <span className="animate-shake-once inline-block">⚠️</span>
             {warning.message}. Còn {warning.remaining} lần trước khi bị tự động nộp bài.
           </span>
           <button onClick={() => setWarning(null)} className="ml-2 text-red-500">
             ✕
+          </button>
+        </div>
+      )}
+
+      {submitError && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-800 flex items-center justify-between animate-slide-down">
+          <span>Không thể nộp bài do mất mạng — đang tự động thử lại…</span>
+          <button
+            onClick={() => {
+              if (!submittedRef.current) {
+                submittedRef.current = true;
+                void handleSubmit(false);
+              }
+            }}
+            className="ml-2 underline font-medium shrink-0"
+          >
+            Thử lại ngay
           </button>
         </div>
       )}
@@ -410,7 +497,7 @@ export default function ExamTakePage() {
                     <button
                       key={idx}
                       onClick={() => toggleOption(question, idx)}
-                      className={`w-full text-left rounded-xl border px-4 py-3 text-sm transition-colors ${
+                      className={`w-full text-left rounded-xl border px-4 py-3 text-sm transition-all duration-150 active:scale-[0.98] ${
                         selected
                           ? "border-slate-900 bg-slate-900 text-white"
                           : "border-slate-300 bg-white text-slate-800"
@@ -427,9 +514,12 @@ export default function ExamTakePage() {
 
         <button
           onClick={requestSubmit}
-          className="w-full rounded-xl bg-emerald-600 text-white py-4 text-base font-medium"
+          disabled={submitting}
+          className="w-full rounded-xl bg-emerald-600 text-white py-4 text-base font-medium transition-all duration-150 active:scale-[0.98] disabled:opacity-60"
         >
-          Nộp bài ({answeredCount}/{data.questions.length} câu đã làm)
+          {submitting
+            ? "Đang nộp bài…"
+            : `Nộp bài (${answeredCount}/${data.questions.length} câu đã làm)`}
         </button>
       </main>
 
@@ -444,11 +534,11 @@ export default function ExamTakePage() {
 
       {showGrid && (
         <div
-          className="fixed inset-0 bg-black/40 z-20 flex items-end"
+          className="fixed inset-0 bg-black/40 z-20 flex items-end animate-fade-in"
           onClick={() => setShowGrid(false)}
         >
           <div
-            className="w-full bg-white rounded-t-2xl p-4 max-h-[70vh] overflow-y-auto"
+            className="w-full bg-white rounded-t-2xl p-4 max-h-[70vh] overflow-y-auto animate-slide-up"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
@@ -491,11 +581,11 @@ export default function ExamTakePage() {
 
       {showSubmitConfirm && (
         <div
-          className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center px-4"
+          className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center px-4 animate-fade-in"
           onClick={() => setShowSubmitConfirm(false)}
         >
           <div
-            className="w-full max-w-xs bg-white rounded-2xl p-5 space-y-4"
+            className="w-full max-w-xs bg-white rounded-2xl p-5 space-y-4 animate-scale-in"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-sm text-slate-800">

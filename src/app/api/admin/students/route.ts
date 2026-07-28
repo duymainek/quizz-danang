@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminUser } from "@/lib/auth";
+import { requireAdminUser, requirePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError, jsonError } from "@/lib/api-helpers";
 import { createStudentSchema } from "@/lib/validation/students";
 import { generateStudentCode } from "@/lib/code-generator";
+import { getCurrentTermId } from "@/lib/terms";
 
 const MAX_ATTEMPTS = 5;
 
@@ -14,9 +15,11 @@ export async function GET(req: NextRequest) {
     const codesParam = req.nextUrl.searchParams.get("codes")?.trim();
     const db = createAdminClient();
 
+    const termId = await getCurrentTermId(db);
     let query = db
       .from("students")
       .select("id, code, full_name, created_at, exam_assignments(count)")
+      .eq("term_id", termId)
       .order("created_at", { ascending: false });
 
     if (codesParam) {
@@ -52,15 +55,16 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdminUser();
+    await requirePermission("manage_students");
     const body = createStudentSchema.parse(await req.json());
     const db = createAdminClient();
 
+    const termId = await getCurrentTermId(db);
     if (body.code) {
       const code = body.code.toUpperCase();
       const { data, error } = await db
         .from("students")
-        .insert({ code, full_name: body.full_name ?? null })
+        .insert({ code, full_name: body.full_name ?? null, birth_year: body.birth_year ?? null, unit: body.unit ?? null, term_id: termId })
         .select()
         .single();
       if (error) {
@@ -78,7 +82,7 @@ export async function POST(req: NextRequest) {
       const code = generateStudentCode();
       const { data, error } = await db
         .from("students")
-        .insert({ code, full_name: body.full_name ?? null })
+        .insert({ code, full_name: body.full_name ?? null, birth_year: body.birth_year ?? null, unit: body.unit ?? null, term_id: termId })
         .select()
         .single();
       if (!error) return NextResponse.json({ student: data }, { status: 201 });

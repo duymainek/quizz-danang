@@ -22,6 +22,7 @@ type ExamSessionRow = {
   submitted_at: string | null;
   status: "in_progress" | "submitted" | "auto_submitted" | "reset";
   violation_count: number;
+  extra_minutes: number;
   exams: {
     duration_minutes: number;
     max_violations: number;
@@ -31,7 +32,7 @@ type ExamSessionRow = {
 };
 
 const SELECT_FIELDS =
-  "id, exam_assignment_id, exam_id, snapshot_questions, session_token_hash, started_at, submitted_at, status, violation_count, exams(duration_minutes, max_violations, monitoring_enabled, name)";
+  "id, exam_assignment_id, exam_id, snapshot_questions, session_token_hash, started_at, submitted_at, status, violation_count, extra_minutes, exams(duration_minutes, max_violations, monitoring_enabled, name)";
 
 /** Lấy tên/mã thí sinh qua exam_assignment — tách truy vấn riêng thay vì embed
  * 2 tầng (exam_sessions -> exam_assignments -> students) để nhất quán với
@@ -80,7 +81,9 @@ export async function resolveExamSession(): Promise<{
 
   if (examSessionRow.status === "in_progress") {
     const startedAt = new Date(examSessionRow.started_at).getTime();
-    const deadline = startedAt + examSessionRow.exams.duration_minutes * 60_000;
+    const deadline =
+      startedAt +
+      (examSessionRow.exams.duration_minutes + (examSessionRow.extra_minutes ?? 0)) * 60_000;
     if (Date.now() > deadline) {
       await scoreSession(examSessionRow.id);
       const { data: updated, error: updateErr } = await db

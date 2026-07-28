@@ -32,7 +32,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { data: assignments, error } = await db
       .from("exam_assignments")
       .select(
-        "status, created_at, students(code, full_name), exam_sessions(id, started_at, submitted_at, status, violation_count, created_at)"
+        "status, created_at, students(code, full_name), exam_sessions!exam_sessions_exam_assignment_id_fkey(id, started_at, submitted_at, status, violation_count, created_at)"
       )
       .eq("exam_id", examId)
       .order("created_at", { ascending: true });

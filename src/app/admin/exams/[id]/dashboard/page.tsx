@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, use } from "react";
 import Link from "next/link";
+import { useCallback, useEffect, useRef, useState, use } from "react";
+
+import { ExamTabs } from "@/components/admin/ExamTabs";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 
 type Row = {
@@ -10,13 +12,14 @@ type Row = {
   student_name: string | null;
   status: "unused" | "in_progress" | "submitted" | "reset";
   session_id: string | null;
+  student_id?: string | null;
   violation_count: number;
   started_at: string | null;
   deadline_at: string | null;
   submitted_at: string | null;
 };
 
-type Violation = { id: string; type: string; created_at: string };
+type Violation = { id: string; type: string; created_at: string; dismissed?: boolean };
 
 const STATUS_LABEL: Record<Row["status"], string> = {
   unused: "Chưa bắt đầu",
@@ -142,6 +145,46 @@ export default function ExamDashboardPage({
     if (res.ok) setViolations(json.violations);
   }
 
+  /** Ops trong ngày thi: gia hạn / nộp hộ / hủy kết quả — gọi API + reload. */
+  async function sessionOp(
+    sessionId: string,
+    payload:
+      | { action: "extend"; minutes: number }
+      | { action: "force_submit" }
+      | { action: "invalidate"; reason: string }
+  ) {
+    const res = await fetch(`/api/admin/sessions/${sessionId}/ops`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      alert(json.error);
+      return;
+    }
+    setSelected(null);
+    load();
+  }
+
+  async function dismissViolation(violationId: string) {
+    const res = await fetch(`/api/admin/violations/${violationId}/dismiss`, {
+      method: "POST",
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      alert(json.error);
+      return;
+    }
+    // Reload danh sách vi phạm trong drawer + bảng chính.
+    if (selected?.session_id) {
+      const r = await fetch(`/api/admin/sessions/${selected.session_id}/violations`);
+      const j = await r.json();
+      if (r.ok) setViolations(j.violations);
+    }
+    load();
+  }
+
   const counts = rows.reduce<Record<string, number>>((acc, r) => {
     acc[r.status] = (acc[r.status] ?? 0) + 1;
     acc.violated = (acc.violated ?? 0) + (r.violation_count > 0 ? 1 : 0);
@@ -152,9 +195,7 @@ export default function ExamDashboardPage({
 
   return (
     <div className="space-y-6">
-      <Link href={`/admin/exams/${examId}`} className="text-sm text-slate-500 hover:underline">
-        ← Chi tiết đề thi
-      </Link>
+      <ExamTabs examId={examId} active="monitor" />
       <h1 className="text-xl font-semibold text-slate-900">Giám sát real-time</h1>
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -209,7 +250,19 @@ export default function ExamDashboardPage({
                     highlighted.has(r.student_code_id) ? "bg-amber-50" : "hover:bg-slate-50"
                   }`}
                 >
-                  <td className="px-4 py-2 font-mono text-slate-900">{r.code}</td>
+                  <td className="px-4 py-2 font-mono">
+                    {r.student_id ? (
+                      <Link
+                        href={`/admin/students/${r.student_id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-primary hover:underline"
+                      >
+                        {r.code}
+                      </Link>
+                    ) : (
+                      r.code
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-slate-700">{r.student_name || "—"}</td>
                   <td className="px-4 py-2">
                     <span
@@ -290,17 +343,75 @@ export default function ExamDashboardPage({
               </button>
             )}
 
+            {selected.session_id && selected.status === "in_progress" && (
+              <div className="mb-4 grid grid-cols-3 gap-2">
+                {[5, 10].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => sessionOp(selected.session_id!, { action: "extend", minutes: m })}
+                    className="rounded-md border border-blue-300 text-blue-700 text-sm py-2 hover:bg-blue-50"
+                  >
+                    +{m} phút
+                  </button>
+                ))}
+                <button
+                  onClick={() => {
+                    if (confirm("Chốt nộp bài ngay cho thí sinh này và chấm điểm?"))
+                      sessionOp(selected.session_id!, { action: "force_submit" });
+                  }}
+                  className="rounded-md border border-emerald-300 text-emerald-700 text-sm py-2 hover:bg-emerald-50"
+                >
+                  Nộp hộ
+                </button>
+              </div>
+            )}
+            {selected.session_id && selected.status === "submitted" && (
+              <button
+                onClick={() => {
+                  const reason = prompt("Lý do hủy kết quả (bắt buộc, sẽ lưu audit):");
+                  if (reason?.trim())
+                    sessionOp(selected.session_id!, { action: "invalidate", reason: reason.trim() });
+                }}
+                className="mb-4 w-full rounded-md border border-red-300 text-red-700 text-sm py-2 hover:bg-red-50"
+              >
+                Hủy kết quả (gian lận)
+              </button>
+            )}
+
             <h3 className="text-sm font-medium text-slate-700 mb-2">Log vi phạm</h3>
             {violations.length === 0 ? (
               <p className="text-sm text-slate-400">Chưa có vi phạm nào.</p>
             ) : (
               <ul className="space-y-2">
                 {violations.map((v) => (
-                  <li key={v.id} className="text-sm border-l-2 border-red-300 pl-3">
-                    <p className="text-slate-800">{VIOLATION_LABEL[v.type] ?? v.type}</p>
-                    <p className="text-xs text-slate-400">
-                      {new Date(v.created_at).toLocaleString("vi-VN")}
-                    </p>
+                  <li
+                    key={v.id}
+                    className={`text-sm border-l-2 pl-3 ${
+                      v.dismissed ? "border-slate-200 opacity-50" : "border-red-300"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-slate-800">
+                          {VIOLATION_LABEL[v.type] ?? v.type}
+                          {v.dismissed && (
+                            <span className="ml-1 text-xs text-slate-400">(đã bỏ qua)</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {new Date(v.created_at).toLocaleString("vi-VN")}
+                        </p>
+                      </div>
+                      {!v.dismissed && (
+                        <button
+                          onClick={() => dismissViolation(v.id)}
+                          className="text-xs text-slate-400 hover:text-slate-700 underline shrink-0"
+                          title="Vi phạm oan (popup hệ thống...) — bỏ qua và trừ lại 1 lần vi phạm"
+                        >
+                          Bỏ qua
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>

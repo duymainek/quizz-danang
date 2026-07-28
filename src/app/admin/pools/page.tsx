@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useCachedFetch } from "@/lib/use-cached-fetch";
+import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 
 type Pool = {
@@ -11,33 +13,21 @@ type Pool = {
 };
 
 export default function PoolsPage() {
-  const [pools, setPools] = useState<Pool[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const load = useCallback(async (query: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const url = query ? `/api/admin/pools?q=${encodeURIComponent(query)}` : "/api/admin/pools";
-      const res = await fetch(url);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
-      setPools(json.pools);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Có lỗi xảy ra");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    const t = setTimeout(() => load(q), 300);
+    const t = setTimeout(() => setDebouncedQ(q), 300);
     return () => clearTimeout(t);
-  }, [q, load]);
+  }, [q]);
+  const { data, reload, isLoading: loading } = useCachedFetch<{ pools: Pool[] }>(
+    debouncedQ ? `/api/admin/pools?q=${encodeURIComponent(debouncedQ)}` : "/api/admin/pools"
+  );
+  const pools = data?.pools ?? [];
+  const load = useCallback(async (_query?: string) => reload(), [reload]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -112,7 +102,11 @@ export default function PoolsPage() {
       )}
 
       {loading ? (
-        <p className="text-sm text-slate-500">Đang tải...</p>
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-14 w-full animate-shimmer" />
+          ))}
+        </div>
       ) : pools.length === 0 ? (
         <p className="text-sm text-slate-500">Chưa có tệp câu hỏi nào.</p>
       ) : (

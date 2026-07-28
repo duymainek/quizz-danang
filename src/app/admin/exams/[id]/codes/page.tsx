@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import Link from "next/link";
+
+import { ExamTabs } from "@/components/admin/ExamTabs";
 import { useCallback } from "react";
 
 type StudentCode = {
@@ -235,9 +236,7 @@ export default function StudentCodesPage({
 
   return (
     <div className="space-y-6">
-      <Link href={`/admin/exams/${examId}`} className="text-sm text-slate-500 hover:underline">
-        ← Chi tiết đề thi
-      </Link>
+      <ExamTabs examId={examId} active="codes" />
 
       <div className="flex items-center justify-between">
         <div>

@@ -23,7 +23,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { data: assignments, error } = await db
       .from("exam_assignments")
       .select(
-        "id, status, created_at, students(code, full_name), exam_sessions(id, started_at, submitted_at, status, violation_count, created_at)"
+        "id, status, created_at, students(id, code, full_name), exam_sessions!exam_sessions_exam_assignment_id_fkey(id, started_at, submitted_at, status, violation_count, created_at, extra_minutes, invalidated)"
       )
       .eq("exam_id", examId)
       .order("created_at", { ascending: true });
@@ -36,21 +36,24 @@ export async function GET(_req: NextRequest, { params }: Params) {
       status: string;
       violation_count: number;
       created_at: string;
+      extra_minutes?: number;
     };
 
     const rows = (assignments ?? []).map((a) => {
-      const student = a.students as unknown as { code: string; full_name: string | null } | null;
+      const student = a.students as unknown as { id: string; code: string; full_name: string | null } | null;
       const sessions = (a.exam_sessions ?? []) as SessionRow[];
       const latest = sessions.sort(
         (x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime()
       )[0];
 
       const deadlineAt = latest
-        ? new Date(latest.started_at).getTime() + exam.duration_minutes * 60_000
+        ? new Date(latest.started_at).getTime() +
+          (exam.duration_minutes + (latest.extra_minutes ?? 0)) * 60_000
         : null;
 
       return {
         student_code_id: a.id,
+        student_id: student?.id ?? null,
         code: student?.code ?? "",
         student_name: student?.full_name ?? null,
         status: a.status,

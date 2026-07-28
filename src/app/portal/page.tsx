@@ -67,10 +67,25 @@ export default function PortalPage() {
     setLoggingIn(true);
     setError(null);
     try {
+      // Fingerprint thu âm thầm — lỗi cũng không chặn đăng nhập.
+      let fingerprint: Record<string, unknown> | null = null;
+      try {
+        const FingerprintJS = (await import("@fingerprintjs/fingerprintjs")).default;
+        const fp = await FingerprintJS.load();
+        const result = await fp.get();
+        fingerprint = {
+          visitor_id: result.visitorId,
+          screen: `${window.screen.width}x${window.screen.height}`,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          platform: navigator.platform,
+        };
+      } catch {
+        // ignore
+      }
       const res = await fetch("/api/student/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: code.trim() }),
+        body: JSON.stringify({ code: code.trim(), fingerprint }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
@@ -201,13 +216,13 @@ export default function PortalPage() {
             Bạn chưa được gán vào đề thi nào. Vui lòng liên hệ giám thị.
           </p>
         ) : (
-          <ul className="space-y-3">
+          <ul className="space-y-3 stagger">
             {exams.map((e) => {
               const disabled = !e.is_active && e.assignment_status !== "in_progress";
               return (
                 <li
                   key={e.exam_id}
-                  className={`bg-white border rounded-xl p-4 transition-colors ${
+                  className={`bg-white border rounded-xl p-4 transition-colors animate-fade-up ${
                     disabled ? "border-slate-200 opacity-50" : "border-slate-200"
                   }`}
                 >
@@ -251,7 +266,7 @@ export default function PortalPage() {
                     <button
                       onClick={() => handleEnter(e.exam_id)}
                       disabled={entering === e.exam_id}
-                      className="mt-3 w-full rounded-lg bg-slate-900 text-white text-sm font-medium py-2.5 hover:bg-slate-800 disabled:opacity-50"
+                      className="mt-3 w-full rounded-lg bg-slate-900 text-white text-sm font-medium py-2.5 hover:bg-slate-800 disabled:opacity-50 transition-all duration-150 active:scale-[0.98]"
                     >
                       {entering === e.exam_id
                         ? "Đang vào..."

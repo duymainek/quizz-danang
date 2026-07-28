@@ -167,7 +167,7 @@ export function ExamForm({
             <input
               type="number"
               min={0.1}
-              step={0.5}
+              step="any"
               value={scale}
               onChange={(e) => setScale(Number(e.target.value))}
               className="w-32 rounded-md border border-slate-300 px-3 py-2 text-sm"

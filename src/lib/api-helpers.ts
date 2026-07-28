@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { AuthError } from "@/lib/auth";
+import { AuthError, ForbiddenError } from "@/lib/auth";
 import { ExamSessionError } from "@/lib/exam/session-guard";
 import { StudentSessionError } from "@/lib/student/session";
 
@@ -13,6 +13,9 @@ export function handleApiError(err: unknown) {
   if (err instanceof AuthError) {
     return jsonError(err.message, 401);
   }
+  if (err instanceof ForbiddenError) {
+    return jsonError(err.message, 403);
+  }
   if (err instanceof StudentSessionError) {
     return jsonError(err.message, err.status);
   }
@@ -20,6 +23,12 @@ export function handleApiError(err: unknown) {
     return jsonError(err.issues.map((i) => i.message).join("; "), 422);
   }
   if (err instanceof Error) {
+    console.error(err);
+    return jsonError(err.message, 400);
+  }
+  // PostgrestError của Supabase không phải instance của Error nhưng có .message
+  // — hiển thị message thật thay vì "không xác định" để debug được.
+  if (err && typeof err === "object" && "message" in err && typeof err.message === "string") {
     console.error(err);
     return jsonError(err.message, 400);
   }
