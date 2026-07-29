@@ -45,18 +45,23 @@ export async function POST(req: NextRequest) {
     });
     if (roleErr) throw roleErr;
 
-    await db
+    // 2 thao tác bookkeeping độc lập, không ảnh hưởng response — chạy song
+    // song và không chặn request (fire-and-forget).
+    void db
       .from("admin_invites")
       .update({ used_at: new Date().toISOString() })
-      .eq("id", invite.id);
-
-    await db.from("audit_logs").insert({
-      actor_email: invite.email,
-      action: "accept_invite",
-      target_type: "admin_roles",
-      target_id: created.user.id,
-      metadata: { role: invite.role },
-    });
+      .eq("id", invite.id)
+      .then(() => {});
+    void db
+      .from("audit_logs")
+      .insert({
+        actor_email: invite.email,
+        action: "accept_invite",
+        target_type: "admin_roles",
+        target_id: created.user.id,
+        metadata: { role: invite.role },
+      })
+      .then(() => {});
 
     return NextResponse.json({ ok: true, email: invite.email });
   } catch (err) {

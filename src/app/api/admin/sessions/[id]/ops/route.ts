@@ -41,14 +41,19 @@ export async function POST(
       .single();
     if (error || !session) return jsonError("Không tìm thấy phiên thi", 404);
 
-    const audit = (action: string, metadata: Record<string, unknown>) =>
-      db.from("audit_logs").insert({
-        actor_email: user.email ?? "unknown",
-        action,
-        target_type: "exam_sessions",
-        target_id: id,
-        metadata,
-      });
+    // Fire-and-forget — audit log không cần chặn response.
+    const audit = (action: string, metadata: Record<string, unknown>) => {
+      void db
+        .from("audit_logs")
+        .insert({
+          actor_email: user.email ?? "unknown",
+          action,
+          target_type: "exam_sessions",
+          target_id: id,
+          metadata,
+        })
+        .then(() => {});
+    };
 
     switch (body.action) {
       case "extend": {
@@ -62,7 +67,7 @@ export async function POST(
           .eq("id", id)
           .eq("status", "in_progress");
         if (e) throw e;
-        await audit("extend_session", { minutes: body.minutes, total_extra: newExtra });
+        audit("extend_session", { minutes: body.minutes, total_extra: newExtra });
         return NextResponse.json({ ok: true, extra_minutes: newExtra });
       }
 
@@ -71,18 +76,22 @@ export async function POST(
           return jsonError("Phiên này không ở trạng thái đang thi", 409);
         }
         await scoreSession(id);
-        const { error: e } = await db
-          .from("exam_sessions")
-          .update({ status: "submitted", submitted_at: new Date().toISOString() })
-          .eq("id", id)
-          .eq("status", "in_progress");
-        if (e) throw e;
-        await db
-          .from("exam_assignments")
-          .update({ status: "submitted" })
-          .eq("id", session.exam_assignment_id)
-          .neq("status", "submitted");
-        await audit("force_submit", {});
+        // 2 update độc lập (không cái nào cần kết quả của cái kia) — chạy song song.
+        const [sessionUpd, assignmentUpd] = await Promise.all([
+          db
+            .from("exam_sessions")
+            .update({ status: "submitted", submitted_at: new Date().toISOString() })
+            .eq("id", id)
+            .eq("status", "in_progress"),
+          db
+            .from("exam_assignments")
+            .update({ status: "submitted" })
+            .eq("id", session.exam_assignment_id)
+            .neq("status", "submitted"),
+        ]);
+        if (sessionUpd.error) throw sessionUpd.error;
+        if (assignmentUpd.error) throw assignmentUpd.error;
+        audit("force_submit", {});
         return NextResponse.json({ ok: true });
       }
 
@@ -92,7 +101,7 @@ export async function POST(
           .update({ invalidated: true, invalidated_reason: body.reason })
           .eq("id", id);
         if (e) throw e;
-        await audit("invalidate_session", { reason: body.reason });
+        audit("invalidate_session", { reason: body.reason });
         return NextResponse.json({ ok: true });
       }
 
@@ -102,7 +111,7 @@ export async function POST(
           .update({ invalidated: false, invalidated_reason: null })
           .eq("id", id);
         if (e) throw e;
-        await audit("restore_session", {});
+        audit("restore_session", {});
         return NextResponse.json({ ok: true });
       }
 
@@ -116,7 +125,7 @@ export async function POST(
           })
           .eq("session_id", id);
         if (e) throw e;
-        await audit("set_manual_score", { score: body.score, reason: body.reason });
+        audit("set_manual_score", { score: body.score, reason: body.reason });
         return NextResponse.json({ ok: true });
       }
     }

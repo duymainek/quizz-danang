@@ -16,44 +16,31 @@ export async function POST(
     const { id } = await params;
     const db = createAdminClient();
 
-    const { data: v, error } = await db
-      .from("violation_logs")
-      .select("id, session_id, type, dismissed")
-      .eq("id", id)
-      .single();
-    if (error || !v) return jsonError("Không tìm thấy bản ghi vi phạm", 404);
-    if (v.dismissed) return jsonError("Vi phạm này đã được bỏ qua trước đó", 409);
-
-    const { error: e1 } = await db
-      .from("violation_logs")
-      .update({
-        dismissed: true,
-        dismissed_by: user.email ?? "unknown",
-        dismissed_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-    if (e1) throw e1;
-
-    // Giảm violation_count nhưng không xuống dưới 0.
-    const { data: session } = await db
-      .from("exam_sessions")
-      .select("violation_count")
-      .eq("id", v.session_id)
-      .single();
-    if (session && session.violation_count > 0) {
-      await db
-        .from("exam_sessions")
-        .update({ violation_count: session.violation_count - 1 })
-        .eq("id", v.session_id);
+    // RPC gộp: đánh dấu dismissed (chỉ khi chưa dismissed — idempotent) + giảm
+    // violation_count bằng 1 UPDATE trực tiếp trong SQL, không cần đọc trước
+    // rồi ghi lại. Trước đây là 3 round-trip tuần tự (đọc, update, đọc lại,
+    // update), giờ còn 1.
+    const { data: rpcData, error } = await db
+      .rpc("dismiss_violation", { p_violation_id: id, p_actor: user.email ?? "unknown" })
+      .maybeSingle();
+    if (error) throw error;
+    const data = rpcData as { session_id: string; type: string; session_status: string } | null;
+    if (!data || !data.session_id) {
+      return jsonError("Không tìm thấy bản ghi vi phạm hoặc đã được bỏ qua trước đó", 404);
     }
 
-    await db.from("audit_logs").insert({
-      actor_email: user.email ?? "unknown",
-      action: "dismiss_violation",
-      target_type: "violation_logs",
-      target_id: id,
-      metadata: { session_id: v.session_id, type: v.type },
-    });
+    // Ghi audit log không chặn response — best-effort, giống pattern đã dùng
+    // ở checkin/route.ts và student/login/route.ts.
+    void db
+      .from("audit_logs")
+      .insert({
+        actor_email: user.email ?? "unknown",
+        action: "dismiss_violation",
+        target_type: "violation_logs",
+        target_id: id,
+        metadata: { session_id: data.session_id, type: data.type },
+      })
+      .then(() => {});
 
     return NextResponse.json({ ok: true });
   } catch (err) {

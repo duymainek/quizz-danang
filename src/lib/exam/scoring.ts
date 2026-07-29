@@ -39,24 +39,26 @@ function isCorrect(q: SnapshotQuestion, selected: number[] | undefined): boolean
 export async function scoreSession(sessionId: string): Promise<void> {
   const db = createAdminClient();
 
-  const { data: session, error: sessionErr } = await db
-    .from("exam_sessions")
-    .select("snapshot_questions, exam_id, exams(scoring_mode, scale)")
-    .eq("id", sessionId)
-    .single();
-  if (sessionErr) throw sessionErr;
+  // session và answers không phụ thuộc lẫn nhau (cả 2 chỉ cần sessionId đã có
+  // sẵn) — chạy song song thay vì tuần tự để giảm 1 round-trip.
+  const [sessionRes, answersRes] = await Promise.all([
+    db
+      .from("exam_sessions")
+      .select("snapshot_questions, exam_id, exams(scoring_mode, scale)")
+      .eq("id", sessionId)
+      .single(),
+    db.from("answers").select("question_id, selected_options").eq("session_id", sessionId),
+  ]);
+  if (sessionRes.error) throw sessionRes.error;
+  if (answersRes.error) throw answersRes.error;
+  const session = sessionRes.data;
+  const answerRows = answersRes.data;
 
   const snapshot = session.snapshot_questions as unknown as SnapshotQuestion[];
   const examConfig = session.exams as unknown as {
     scoring_mode: "uniform" | "per_question";
     scale: number;
   };
-
-  const { data: answerRows, error: answersErr } = await db
-    .from("answers")
-    .select("question_id, selected_options")
-    .eq("session_id", sessionId);
-  if (answersErr) throw answersErr;
 
   const answerByQuestion = new Map(
     ((answerRows ?? []) as AnswerRow[]).map((a) => [a.question_id, a.selected_options])

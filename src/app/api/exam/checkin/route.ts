@@ -33,27 +33,28 @@ export async function POST(req: NextRequest) {
     }
     const examId = tokenRow.exam_id;
 
-    // 2. Tìm phiên thi của thí sinh cho đề này (đã nộp hoặc đang làm).
-    const { data: session } = await db
-      .from("exam_sessions")
-      .select(
-        "id, status, assignment:exam_assignments!exam_sessions_exam_assignment_id_fkey!inner(student_id)"
-      )
-      .eq("exam_id", examId)
-      .eq("assignment.student_id", student.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    // 3. So thiết bị check-in với thiết bị đã đăng nhập/làm bài.
-    const { data: lastLogin } = await db
-      .from("login_events")
-      .select("device_id")
-      .eq("student_id", student.id)
-      .eq("success", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    // 2 & 3. Tìm phiên thi + thiết bị đăng nhập gần nhất — 2 truy vấn độc lập
+    // (không cái nào cần kết quả của cái kia), chạy song song.
+    const [{ data: session }, { data: lastLogin }] = await Promise.all([
+      db
+        .from("exam_sessions")
+        .select(
+          "id, status, assignment:exam_assignments!exam_sessions_exam_assignment_id_fkey!inner(student_id)"
+        )
+        .eq("exam_id", examId)
+        .eq("assignment.student_id", student.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      db
+        .from("login_events")
+        .select("device_id")
+        .eq("student_id", student.id)
+        .eq("success", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
     const deviceMatched =
       !!deviceId && !!lastLogin?.device_id && deviceId === lastLogin.device_id;
 

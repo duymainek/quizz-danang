@@ -26,28 +26,30 @@ export async function POST(_req: NextRequest, { params }: Params) {
 
     // Đánh dấu lượt thi đang chạy (nếu có) là 'reset' — KHÔNG xóa, giữ lại
     // để phục vụ audit/khiếu nại sau này (xem mục 14.6 trong implementation-plan.md).
-    const { error: sessionErr } = await db
-      .from("exam_sessions")
-      .update({ status: "reset" })
-      .eq("exam_assignment_id", id)
-      .eq("status", "in_progress");
-    if (sessionErr) throw sessionErr;
+    // 2 update này độc lập nhau (cùng phụ thuộc studentCode đã có, không phụ
+    // thuộc lẫn nhau) — chạy song song thay vì tuần tự.
+    const [sessionRes, updateRes] = await Promise.all([
+      db
+        .from("exam_sessions")
+        .update({ status: "reset" })
+        .eq("exam_assignment_id", id)
+        .eq("status", "in_progress"),
+      db.from("student_codes").update({ status: "unused" }).eq("id", id).select().single(),
+    ]);
+    if (sessionRes.error) throw sessionRes.error;
+    if (updateRes.error) throw updateRes.error;
+    const updatedCode = updateRes.data;
 
-    const { data: updatedCode, error: updateErr } = await db
-      .from("student_codes")
-      .update({ status: "unused" })
-      .eq("id", id)
-      .select()
-      .single();
-    if (updateErr) throw updateErr;
-
-    await db.from("audit_logs").insert({
-      actor_email: admin.email ?? "unknown",
-      action: "reset_student_code",
-      target_type: "student_codes",
-      target_id: id,
-      metadata: { code: studentCode.code, previous_status: studentCode.status },
-    });
+    void db
+      .from("audit_logs")
+      .insert({
+        actor_email: admin.email ?? "unknown",
+        action: "reset_student_code",
+        target_type: "student_codes",
+        target_id: id,
+        metadata: { code: studentCode.code, previous_status: studentCode.status },
+      })
+      .then(() => {});
 
     return NextResponse.json({ student_code: updatedCode });
   } catch (err) {

@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { handleApiError } from "@/lib/api-helpers";
-import { getSupervisorPermissions, PERMISSIONS } from "@/lib/permissions";
+import { DEFAULT_SUPERVISOR_PERMISSIONS, PERMISSIONS } from "@/lib/permissions";
 
 export async function GET() {
   try {
-    const { user, role } = await requireRole("supervisor");
-    const permissions =
+    // requireRole đã gộp sẵn role + permissions trong 1 round-trip RPC —
+    // không cần query role_permissions thêm 1 lần nữa ở đây.
+    const { user, role, permissions } = await requireRole("supervisor");
+    const resolvedPermissions =
       role === "admin"
         ? PERMISSIONS.map((p) => p.key)
-        : await getSupervisorPermissions(createAdminClient());
-    return NextResponse.json({ email: user.email, role, permissions });
+        : (permissions ?? DEFAULT_SUPERVISOR_PERMISSIONS);
+    return NextResponse.json({ email: user.email, role, permissions: resolvedPermissions });
   } catch (err) {
     return handleApiError(err);
   }

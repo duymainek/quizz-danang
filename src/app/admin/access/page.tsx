@@ -53,14 +53,23 @@ export default function AccessPage() {
   }, []);
 
   async function savePerms(next: PermissionKey[]) {
+    const prev = perms;
     setPerms(next); // optimistic
     setSavingPerms(true);
     try {
-      await fetch("/api/admin/config", {
+      const res = await fetch("/api/admin/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: "role_permissions", value: next, scope: "system" }),
       });
+      if (!res.ok) {
+        const json = await res.json();
+        alert(json.error ?? "Không lưu được phân quyền");
+        setPerms(prev); // revert
+      }
+    } catch {
+      alert("Mất kết nối — chưa lưu được phân quyền");
+      setPerms(prev);
     } finally {
       setSavingPerms(false);
     }

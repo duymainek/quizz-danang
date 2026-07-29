@@ -27,6 +27,8 @@ export async function GET() {
     const startOfToday = startOfTodayVN();
     const termId = await getCurrentTermId(db);
 
+    // termExamIds (dùng ở khối chart bên dưới) không phụ thuộc kết quả của
+    // 6 query đầu — gộp chung 1 Promise.all luôn, thay vì query riêng sau đó.
     const [
       totalExams,
       activeExams,
@@ -34,6 +36,7 @@ export async function GET() {
       submittedToday,
       violationsToday,
       activeExamRows,
+      termExamsRes,
     ] = await Promise.all([
       db.from("exams").select("id", { count: "exact", head: true }).eq("term_id", termId),
       db
@@ -60,6 +63,7 @@ export async function GET() {
         .eq("term_id", termId)
         .eq("is_active", true)
         .order("created_at", { ascending: false }),
+      db.from("exams").select("id").eq("term_id", termId),
     ]);
 
     for (const r of [
@@ -69,6 +73,7 @@ export async function GET() {
       submittedToday,
       violationsToday,
       activeExamRows,
+      termExamsRes,
     ]) {
       if (r.error) throw r.error;
     }
@@ -88,9 +93,7 @@ export async function GET() {
 
     // Sprint 2 — dữ liệu chart: lượt nộp 14 ngày + phân bố điểm + phiên gần nhất.
     const since14d = new Date(Date.now() - 14 * 86_400_000).toISOString();
-    const termExamIds = (
-      await db.from("exams").select("id").eq("term_id", termId)
-    ).data?.map((e) => e.id) ?? [];
+    const termExamIds = termExamsRes.data?.map((e) => e.id) ?? [];
 
     // Query từng bước, không embed nhiều tầng (dễ lỗi PostgREST khó debug).
     let recentSubmissionRows: { submitted_at: string | null }[] = [];
@@ -133,13 +136,19 @@ export async function GET() {
       examNameById = new Map((examsNameRes.data ?? []).map((e) => [e.id, e.name]));
 
       // Điểm: lấy id session của khóa trước, rồi query scores theo session_id.
-      const { data: allSessionIds, error: idsErr } = await db
-        .from("exam_sessions")
-        .select("id")
-        .in("exam_id", termExamIds)
-        .eq("invalidated", false);
-      if (idsErr) throw idsErr;
-      const ids = (allSessionIds ?? []).map((s) => s.id);
+      // Tên/mã thí sinh của các phiên gần nhất chỉ cần assignmentIds đã có sẵn
+      // từ sessionRows — độc lập với việc lấy session ids/scores, chạy song song.
+      const assignmentIds = sessionRows.map((s) => s.exam_assignment_id);
+      const [sessionIdsRes, assignmentsRes] = await Promise.all([
+        db.from("exam_sessions").select("id").in("exam_id", termExamIds).eq("invalidated", false),
+        assignmentIds.length > 0
+          ? db.from("exam_assignments").select("id, students(code, full_name)").in("id", assignmentIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (sessionIdsRes.error) throw sessionIdsRes.error;
+      if (assignmentsRes.error) throw assignmentsRes.error;
+
+      const ids = (sessionIdsRes.data ?? []).map((s) => s.id);
       if (ids.length > 0) {
         const { data: scores, error: scErr } = await db
           .from("scores")
@@ -153,18 +162,9 @@ export async function GET() {
         }));
       }
 
-      // Tên/mã thí sinh của các phiên gần nhất.
-      const assignmentIds = sessionRows.map((s) => s.exam_assignment_id);
-      if (assignmentIds.length > 0) {
-        const { data: assignments, error: aErr } = await db
-          .from("exam_assignments")
-          .select("id, students(code, full_name)")
-          .in("id", assignmentIds);
-        if (aErr) throw aErr;
-        for (const a of assignments ?? []) {
-          const st = a.students as unknown as { code: string; full_name: string | null } | null;
-          if (st) studentByAssignment.set(a.id, st);
-        }
+      for (const a of assignmentsRes.data ?? []) {
+        const st = a.students as unknown as { code: string; full_name: string | null } | null;
+        if (st) studentByAssignment.set(a.id, st);
       }
     }
 

@@ -13,13 +13,16 @@ export async function POST(
     await requirePermission("manage_exams");
     const { id } = await params;
     const db = createAdminClient();
-    const termId = await getCurrentTermId(db);
-
-    const { data: src, error: srcErr } = await db
-      .from("exams")
-      .select("*, exam_pool_configs(pool_id, num_questions_to_draw)")
-      .eq("id", id)
-      .single();
+    // termId và đề nguồn không phụ thuộc lẫn nhau — chạy song song.
+    const [termId, srcRes] = await Promise.all([
+      getCurrentTermId(db),
+      db
+        .from("exams")
+        .select("*, exam_pool_configs(pool_id, num_questions_to_draw)")
+        .eq("id", id)
+        .single(),
+    ]);
+    const { data: src, error: srcErr } = srcRes;
     if (srcErr) throw srcErr;
     if (!src) return jsonError("Không tìm thấy đề thi", 404);
 

@@ -28,11 +28,12 @@ type ExamSessionRow = {
     max_violations: number;
     monitoring_enabled: boolean;
     name: string;
+    term_id: string | null;
   };
 };
 
 const SELECT_FIELDS =
-  "id, exam_assignment_id, exam_id, snapshot_questions, session_token_hash, started_at, submitted_at, status, violation_count, extra_minutes, exams(duration_minutes, max_violations, monitoring_enabled, name)";
+  "id, exam_assignment_id, exam_id, snapshot_questions, session_token_hash, started_at, submitted_at, status, violation_count, extra_minutes, exams(duration_minutes, max_violations, monitoring_enabled, name, term_id)";
 
 /** Lấy tên/mã thí sinh qua exam_assignment — tách truy vấn riêng thay vì embed
  * 2 tầng (exam_sessions -> exam_assignments -> students) để nhất quán với
@@ -79,6 +80,11 @@ export async function resolveExamSession(): Promise<{
 
   let examSessionRow = session as unknown as ExamSessionRow;
 
+  // Thông tin thí sinh chỉ cần exam_assignment_id (đã có ngay từ đây), không
+  // phụ thuộc việc auto-submit do hết giờ bên dưới — bắt đầu fetch song song
+  // luôn, await gộp lại ở cuối.
+  const studentInfoPromise = fetchStudentInfo(db, examSessionRow.exam_assignment_id);
+
   if (examSessionRow.status === "in_progress") {
     const startedAt = new Date(examSessionRow.started_at).getTime();
     const deadline =
@@ -112,6 +118,6 @@ export async function resolveExamSession(): Promise<{
     }
   }
 
-  const student = await fetchStudentInfo(db, examSessionRow.exam_assignment_id);
+  const student = await studentInfoPromise;
   return { session: { ...examSessionRow, student }, db };
 }

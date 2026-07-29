@@ -39,14 +39,40 @@ export async function getAdminRole(userId: string): Promise<AdminRole> {
   return (data?.role as AdminRole) ?? "admin";
 }
 
-/** Yêu cầu đăng nhập + đúng quyền. minRole="admin" chặn supervisor. */
+/**
+ * RPC gộp role (admin_roles) + role_permissions (app_config) thành 1
+ * round-trip — thay vì lookup role rồi mới lookup permissions tuần tự.
+ */
+async function getAdminRoleContext(
+  userId: string
+): Promise<{ role: AdminRole; permissions: import("@/lib/permissions").PermissionKey[] | null }> {
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const db = createAdminClient();
+  const { data, error } = await db
+    .rpc("get_admin_role_context", { p_user_id: userId })
+    .single();
+  if (error) throw error;
+  const row = data as { role: AdminRole; permissions: unknown };
+  return {
+    role: row.role ?? "admin",
+    permissions: Array.isArray(row.permissions)
+      ? (row.permissions as import("@/lib/permissions").PermissionKey[])
+      : null,
+  };
+}
+
+/**
+ * Yêu cầu đăng nhập + đúng quyền. minRole="admin" chặn supervisor.
+ * Trả kèm `permissions` (đã có sẵn từ cùng round-trip RPC) để nơi gọi như
+ * /api/admin/me không phải query `role_permissions` thêm 1 lần nữa.
+ */
 export async function requireRole(minRole: AdminRole = "supervisor") {
   const user = await requireAdminUser();
-  const role = await getAdminRole(user.id);
+  const { role, permissions } = await getAdminRoleContext(user.id);
   if (minRole === "admin" && role !== "admin") {
     throw new ForbiddenError("Tài khoản giám sát viên không có quyền thực hiện thao tác này");
   }
-  return { user, role };
+  return { user, role, permissions };
 }
 
 /**
@@ -55,12 +81,11 @@ export async function requireRole(minRole: AdminRole = "supervisor") {
  */
 export async function requirePermission(permission: import("@/lib/permissions").PermissionKey) {
   const user = await requireAdminUser();
-  const role = await getAdminRole(user.id);
+  const { role, permissions } = await getAdminRoleContext(user.id);
   if (role !== "admin") {
-    const { createAdminClient } = await import("@/lib/supabase/admin");
-    const { hasPermission } = await import("@/lib/permissions");
-    const ok = await hasPermission(createAdminClient(), role, permission);
-    if (!ok) {
+    const { DEFAULT_SUPERVISOR_PERMISSIONS } = await import("@/lib/permissions");
+    const perms = permissions ?? DEFAULT_SUPERVISOR_PERMISSIONS;
+    if (!perms.includes(permission)) {
       throw new ForbiddenError("Tài khoản của bạn chưa được cấp quyền thực hiện thao tác này");
     }
   }

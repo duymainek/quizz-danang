@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { OfflineSync, type SaveState } from "@/lib/exam/offline-sync";
+import { CheckinScanner } from "@/components/exam/CheckinScanner";
 
 /**
  * Ghi log âm thầm (fire-and-forget) — không await ở nơi gọi, không throw,
@@ -38,6 +39,7 @@ type SessionData = {
   questions: Question[];
   answers: { question_id: string; selected_options: number[] }[];
   student: { code: string; student_name: string | null };
+  checkin_enabled: boolean;
 };
 
 const VIOLATION_LABEL: Record<string, string> = {
@@ -55,6 +57,7 @@ export default function ExamTakePage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(false);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [showCheckin, setShowCheckin] = useState(false);
   const [timeLeftMs, setTimeLeftMs] = useState(0);
   const [warning, setWarning] = useState<{ message: string; remaining: number } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -293,7 +296,9 @@ export default function ExamTakePage() {
     setShowGrid(false);
   }
 
-  async function handleSubmit(auto = false) {
+  /** Gọi API nộp bài thật sự. Dùng cho cả nộp chủ động (sau khi check-in xong,
+   * hoặc ngay lập tức nếu check-in đang tắt) lẫn auto-submit (hết giờ). */
+  async function submitToServer(auto: boolean, reason?: string) {
     // KHÔNG dùng window.confirm()/alert() ở đây: dialog gốc của trình duyệt
     // làm trang mất focus (kích hoạt 'blur'/'visibilitychange'), khiến hệ
     // thống hiểu nhầm thành hành vi vi phạm ngay khi thí sinh đang nộp bài
@@ -315,7 +320,7 @@ export default function ExamTakePage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       log("submit_success", { auto });
       syncRef.current?.clear();
-      router.replace(`/exam/done?reason=${auto ? "timeout" : "manual"}`);
+      router.replace(`/exam/done?reason=${reason ?? (auto ? "timeout" : "manual")}`);
     } catch (e) {
       // Mất mạng lúc nộp: giữ nguyên màn hình làm bài, banner + tự thử lại.
       log("submit_error", { auto, error: e instanceof Error ? e.message : String(e) });
@@ -325,10 +330,27 @@ export default function ExamTakePage() {
       setTimeout(() => {
         if (!submittedRef.current) {
           submittedRef.current = true;
-          void handleSubmit(auto);
+          void submitToServer(auto, reason);
         }
       }, 4000);
     }
+  }
+
+  /**
+   * Điểm vào duy nhất cho nộp bài chủ động/hết giờ.
+   * - auto=true (hết giờ): nộp thẳng, KHÔNG bắt check-in.
+   * - auto=false (thí sinh bấm nộp) + check-in đang bật cho đề này: chuyển
+   *   sang màn hình quét QR, chỉ nộp thật sau khi quét thành công.
+   * - Vi phạm bị auto-submit thì server tự xử lý ở /api/exam/violation và
+   *   redirect thẳng — không đi qua hàm này, nên cũng không bị chặn bởi check-in.
+   */
+  async function handleSubmit(auto = false) {
+    if (!auto && data?.checkin_enabled) {
+      log("checkin_required_before_submit");
+      setShowCheckin(true);
+      return;
+    }
+    await submitToServer(auto);
   }
 
   function requestSubmit() {
@@ -613,6 +635,21 @@ export default function ExamTakePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showCheckin && (
+        <CheckinScanner
+          onCancel={() => {
+            log("checkin_cancelled");
+            setShowCheckin(false);
+          }}
+          onSuccess={() => {
+            setShowCheckin(false);
+            log("checkin_success");
+            void submitToServer(false, "manual");
+          }}
+          onLog={(type, payload) => log(type, payload)}
+        />
       )}
     </div>
   );

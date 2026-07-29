@@ -48,40 +48,48 @@ export async function POST(
       (currentQuestions ?? []).map((q) => [q.id, q.correct_answers as number[]])
     );
 
-    let updated = 0;
-    for (const s of sessions ?? []) {
-      const snapshot = (s.snapshot_questions as unknown as SnapshotQuestion[]) ?? [];
-      let changed = false;
-      const refreshed = snapshot.map((q) => {
-        const current = currentById.get(q.id);
-        if (
-          current &&
-          JSON.stringify([...current].sort()) !==
-            JSON.stringify([...q.correct_answers].sort())
-        ) {
-          changed = true;
-          return { ...q, correct_answers: current };
+    // Mỗi session độc lập hoàn toàn với các session khác — chấm lại song song
+    // thay vì tuần tự từng session một (trước đây là O(N) round-trip nối tiếp
+    // cho N thí sinh, rất chậm với đề đông thí sinh).
+    await Promise.all(
+      (sessions ?? []).map(async (s) => {
+        const snapshot = (s.snapshot_questions as unknown as SnapshotQuestion[]) ?? [];
+        let changed = false;
+        const refreshed = snapshot.map((q) => {
+          const current = currentById.get(q.id);
+          if (
+            current &&
+            JSON.stringify([...current].sort()) !==
+              JSON.stringify([...q.correct_answers].sort())
+          ) {
+            changed = true;
+            return { ...q, correct_answers: current };
+          }
+          return q;
+        });
+        if (changed) {
+          const { error: upErr } = await db
+            .from("exam_sessions")
+            .update({ snapshot_questions: refreshed })
+            .eq("id", s.id);
+          if (upErr) throw upErr;
         }
-        return q;
-      });
-      if (changed) {
-        const { error: upErr } = await db
-          .from("exam_sessions")
-          .update({ snapshot_questions: refreshed })
-          .eq("id", s.id);
-        if (upErr) throw upErr;
-      }
-      await scoreSession(s.id);
-      updated++;
-    }
+        await scoreSession(s.id);
+      })
+    );
+    const updated = (sessions ?? []).length;
 
-    await db.from("audit_logs").insert({
-      actor_email: user.email ?? "unknown",
-      action: "rescore_exam",
-      target_type: "exams",
-      target_id: examId,
-      metadata: { sessions_rescored: updated },
-    });
+    // Audit log không chặn response.
+    void db
+      .from("audit_logs")
+      .insert({
+        actor_email: user.email ?? "unknown",
+        action: "rescore_exam",
+        target_type: "exams",
+        target_id: examId,
+        metadata: { sessions_rescored: updated },
+      })
+      .then(() => {});
 
     return NextResponse.json({ ok: true, sessions_rescored: updated });
   } catch (err) {

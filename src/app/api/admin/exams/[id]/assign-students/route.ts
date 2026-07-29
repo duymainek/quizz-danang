@@ -17,12 +17,19 @@ export async function POST(req: NextRequest, { params }: Params) {
     const body = assignStudentsSchema.parse(await req.json());
     const db = createAdminClient();
 
-    const { data: exam, error: examErr } = await db
-      .from("exams")
-      .select("id")
-      .eq("id", examId)
-      .single();
-    if (examErr || !exam) return jsonError("Không tìm thấy đề thi", 404);
+    // 2 kiểm tra độc lập nhau (không cái nào cần kết quả của cái kia) — chạy
+    // song song thay vì tuần tự.
+    const [examRes, beforeRes] = await Promise.all([
+      db.from("exams").select("id").eq("id", examId).single(),
+      // Bỏ qua các cặp (exam_id, student_id) đã tồn tại — tránh lỗi trùng khi
+      // admin lỡ chọn cả thí sinh đã được gán từ trước.
+      db
+        .from("exam_assignments")
+        .select("student_id")
+        .eq("exam_id", examId)
+        .in("student_id", body.student_ids),
+    ]);
+    if (examRes.error || !examRes.data) return jsonError("Không tìm thấy đề thi", 404);
 
     const rows = body.student_ids.map((student_id) => ({
       exam_id: examId,
@@ -30,14 +37,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       status: "unused" as const,
     }));
 
-    // Bỏ qua các cặp (exam_id, student_id) đã tồn tại — tránh lỗi trùng khi
-    // admin lỡ chọn cả thí sinh đã được gán từ trước.
-    const { data: before } = await db
-      .from("exam_assignments")
-      .select("student_id")
-      .eq("exam_id", examId)
-      .in("student_id", body.student_ids);
-    const alreadyAssigned = new Set((before ?? []).map((r) => r.student_id));
+    const alreadyAssigned = new Set((beforeRes.data ?? []).map((r) => r.student_id));
 
     const newRows = rows.filter((r) => !alreadyAssigned.has(r.student_id));
 

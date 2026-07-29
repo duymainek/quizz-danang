@@ -41,12 +41,14 @@ export async function POST(req: NextRequest) {
     const body = examInputSchema.parse(await req.json());
     const db = createAdminClient();
 
-    // Xác thực số câu rút không vượt quá số câu có trong từng tệp.
+    // Xác thực số câu rút không vượt quá số câu có trong từng tệp — độc lập
+    // với việc lấy termId, chạy song song.
     const poolIds = body.pool_configs.map((c) => c.pool_id);
-    const { data: pools, error: poolsErr } = await db
-      .from("question_pools")
-      .select("id, name, questions(count)")
-      .in("id", poolIds);
+    const [poolsRes, termId] = await Promise.all([
+      db.from("question_pools").select("id, name, questions(count)").in("id", poolIds),
+      getCurrentTermId(db),
+    ]);
+    const { data: pools, error: poolsErr } = poolsRes;
     if (poolsErr) throw poolsErr;
 
     const poolById = new Map((pools ?? []).map((p) => [p.id, p]));
@@ -62,7 +64,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const termId = await getCurrentTermId(db);
     const { data: exam, error: examErr } = await db
       .from("exams")
       .insert({

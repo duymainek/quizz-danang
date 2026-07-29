@@ -44,11 +44,20 @@ export async function generateExamSnapshot(
 
   const drawnFromAllPools: SnapshotQuestion[] = [];
 
-  for (const cfg of configs) {
-    const { data: questions, error: qErr } = await db
-      .from("questions")
-      .select("id, content, type, options, correct_answers, points")
-      .eq("pool_id", cfg.pool_id);
+  // Mỗi pool độc lập hoàn toàn với các pool khác — fetch song song thay vì
+  // tuần tự từng pool một (trước đây là N round-trip nối tiếp cho N pool).
+  const poolResults = await Promise.all(
+    configs.map((cfg) =>
+      db
+        .from("questions")
+        .select("id, content, type, options, correct_answers, points")
+        .eq("pool_id", cfg.pool_id)
+    )
+  );
+
+  for (let i = 0; i < configs.length; i++) {
+    const cfg = configs[i];
+    const { data: questions, error: qErr } = poolResults[i];
     if (qErr) throw qErr;
 
     const available = (questions ?? []) as DbQuestion[];

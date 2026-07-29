@@ -17,31 +17,13 @@ export type ExamTerm = {
  */
 export async function getCurrentTermId(db: SupabaseClient): Promise<string> {
   const store = await cookies();
-  const fromCookie = store.get(TERM_COOKIE)?.value;
-  if (fromCookie) {
-    const { data } = await db
-      .from("exam_terms")
-      .select("id")
-      .eq("id", fromCookie)
-      .maybeSingle();
-    if (data) return data.id;
-  }
-  const { data: active, error } = await db
-    .from("exam_terms")
-    .select("id")
-    .eq("status", "active")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const fromCookie = store.get(TERM_COOKIE)?.value ?? null;
+  // RPC gộp fallback chain (cookie -> active -> latest) thành 1 round-trip
+  // thay vì tối đa 3 query tuần tự.
+  const { data, error } = await db.rpc("get_current_term_id", {
+    p_cookie_id: fromCookie,
+  });
   if (error) throw error;
-  if (active) return active.id;
-  // Không còn khóa active nào — lấy khóa mới nhất bất kỳ.
-  const { data: latest, error: latestErr } = await db
-    .from("exam_terms")
-    .select("id")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
-  if (latestErr) throw latestErr;
-  return latest.id;
+  if (!data) throw new Error("Chưa có khóa thi nào trong hệ thống");
+  return data as string;
 }

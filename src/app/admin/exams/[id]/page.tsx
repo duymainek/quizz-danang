@@ -5,6 +5,24 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ExamTabs } from "@/components/admin/ExamTabs";
 import { ExamForm, type ExamFormValue } from "@/components/admin/ExamForm";
+import {
+  Clock,
+  ListChecks,
+  ShieldAlert,
+  Monitor,
+  Calculator,
+  Eye,
+  EyeOff,
+  Pencil,
+  Trash2,
+  Play,
+  Pause,
+  AlertTriangle,
+} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type ExamDetail = ExamFormValue & {
   id: string;
@@ -115,7 +133,13 @@ export default function ExamDetailPage({
     }
   }
 
-  if (loading) return <p className="text-sm text-slate-500">Đang tải...</p>;
+  if (loading)
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-64 animate-shimmer" />
+        <Skeleton className="h-40 w-full animate-shimmer" />
+      </div>
+    );
   if (error && !exam)
     return (
       <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
@@ -168,129 +192,140 @@ export default function ExamDetailPage({
 
   return (
     <div className="space-y-6">
-      <Link href="/admin/exams" className="text-sm text-slate-500 hover:underline">
+      <Link href="/admin/exams" className="text-sm text-muted-foreground hover:underline">
         ← Danh sách đề thi
       </Link>
       <ExamTabs examId={id} active="config" />
 
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-slate-900">{exam.name}</h1>
-            <span
-              className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                exam.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
-              }`}
-            >
-              {exam.is_active ? "Đang mở cho thí sinh" : "Chưa mở"}
-            </span>
-          </div>
+      {/* Header: tên đề + trạng thái + hành động chính (điều hướng đã có tabs) */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="text-xl font-semibold truncate">{exam.name}</h1>
+          <Badge variant={exam.is_active ? "default" : "secondary"}>
+            {exam.is_active ? "Đang mở" : "Chưa mở"}
+          </Badge>
         </div>
-        <div className="flex gap-2">
-          <button
+        <div className="flex items-center gap-2">
+          <Button
             onClick={handleToggleActive}
             disabled={togglingActive}
-            className={`rounded-md text-sm px-4 py-2 font-medium disabled:opacity-50 ${
-              exam.is_active
-                ? "border border-amber-300 text-amber-700 hover:bg-amber-50"
-                : "bg-emerald-600 text-white hover:bg-emerald-500"
-            }`}
+            variant={exam.is_active ? "outline" : "default"}
           >
-            {togglingActive ? "Đang lưu..." : exam.is_active ? "Đóng đề thi" : "Mở đề thi"}
-          </button>
-          <Link
-            href={`/admin/exams/${id}/dashboard`}
-            className="rounded-md bg-blue-600 text-white text-sm px-4 py-2 hover:bg-blue-500"
-          >
-            Giám sát real-time
-          </Link>
-          <Link
-            href={`/admin/exams/${id}/codes`}
-            className="rounded-md bg-slate-900 text-white text-sm px-4 py-2 hover:bg-slate-800"
-          >
-            Mã số thí sinh
-          </Link>
-          <Link
-            href={`/admin/exams/${id}/results`}
-            className="rounded-md border border-slate-300 text-sm px-4 py-2 text-slate-700 hover:bg-slate-50"
-          >
-            Kết quả
-          </Link>
+            {exam.is_active ? (
+              <>
+                <Pause className="h-4 w-4" /> Đóng đề thi
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4" /> Mở đề thi
+              </>
+            )}
+          </Button>
           {!editLocked && (
-            <button
-              onClick={() => setEditing(true)}
-              className="rounded-md border border-slate-300 text-sm px-4 py-2 text-slate-700 hover:bg-slate-50"
-            >
-              Sửa
-            </button>
+            <Button variant="outline" onClick={() => setEditing(true)}>
+              <Pencil className="h-4 w-4" /> Sửa
+            </Button>
           )}
           {!deleteLocked && (
-            <button
+            <Button
+              variant="outline"
               onClick={handleDelete}
-              className="rounded-md border border-red-300 text-red-600 text-sm px-4 py-2 hover:bg-red-50"
+              className="text-destructive hover:text-destructive"
             >
-              Xóa
-            </button>
+              <Trash2 className="h-4 w-4" /> Xóa
+            </Button>
           )}
         </div>
       </div>
 
       {editLocked ? (
-        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-          Đề thi này đã có {exam.used_codes_count} mã số được thí sinh dùng để thi (đang thi/đã
-          nộp) nên không thể sửa để đảm bảo tính công bằng — tạo đề mới nếu cần thay đổi cấu hình.
-        </p>
+        <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <p>
+            Đã có {exam.used_codes_count} thí sinh dùng đề này (đang thi/đã nộp) nên không
+            thể sửa cấu hình để đảm bảo công bằng. Tạo đề mới (hoặc dùng &quot;Nhân
+            bản&quot;) nếu cần thay đổi.
+          </p>
+        </div>
       ) : (
         deleteLocked && (
-          <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-3 py-2">
-            Đề thi đã có {exam.student_codes_count} mã số được sinh ra (chưa ai dùng) — vẫn sửa
+          <div className="rounded-lg border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+            Đề đã có {exam.student_codes_count} mã số được sinh (chưa ai dùng) — vẫn sửa
             được, nhưng muốn xóa hẳn đề thì cần xóa các mã số đó trước.
-          </p>
+          </div>
         )
       )}
 
-      <dl className="grid grid-cols-2 gap-4 max-w-xl text-sm">
-        <div>
-          <dt className="text-slate-500">Thời lượng</dt>
-          <dd className="text-slate-900 font-medium">{exam.duration_minutes} phút</dd>
-        </div>
-        <div>
-          <dt className="text-slate-500">Tổng số câu</dt>
-          <dd className="text-slate-900 font-medium">{totalQuestions} câu</dd>
-        </div>
-        <div>
-          <dt className="text-slate-500">Số lần vi phạm cho phép</dt>
-          <dd className="text-slate-900 font-medium">{exam.max_violations}</dd>
-        </div>
-        <div>
-          <dt className="text-slate-500">Giám sát màn hình</dt>
-          <dd className="text-slate-900 font-medium">
-            {exam.monitoring_enabled ? "Bật" : "Tắt"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-slate-500">Cách chấm điểm</dt>
-          <dd className="text-slate-900 font-medium">
-            {exam.scoring_mode === "per_question"
-              ? "Điểm riêng từng câu"
-              : `Chia đều thang điểm ${exam.scale}`}
-          </dd>
-        </div>
-      </dl>
-
-      <div>
-        <h2 className="text-sm font-medium text-slate-700 mb-2">Cấu hình rút câu theo tệp</h2>
-        <ul className="divide-y divide-slate-200 border border-slate-200 rounded-lg bg-white max-w-xl">
-          {exam.exam_pool_configs.map((c) => (
-            <li key={c.pool_id} className="flex items-center justify-between px-4 py-2 text-sm">
-              <span className="text-slate-800">{c.question_pools?.name}</span>
-              <span className="text-slate-500">
-                Rút {c.num_questions_to_draw} / {c.question_pools?.questions?.[0]?.count ?? 0} câu
-              </span>
-            </li>
-          ))}
-        </ul>
+      {/* Thông số dạng stat cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { icon: Clock, label: "Thời lượng", value: `${exam.duration_minutes} phút` },
+          { icon: ListChecks, label: "Tổng số câu", value: `${totalQuestions} câu` },
+          {
+            icon: ShieldAlert,
+            label: "Vi phạm cho phép",
+            value: String(exam.max_violations),
+          },
+          {
+            icon: Monitor,
+            label: "Giám sát màn hình",
+            value: exam.monitoring_enabled ? "Bật" : "Tắt",
+          },
+          {
+            icon: Calculator,
+            label: "Cách chấm",
+            value:
+              exam.scoring_mode === "per_question"
+                ? "Điểm từng câu"
+                : `Chia đều / ${exam.scale}`,
+          },
+          {
+            icon: exam.publish_score ? Eye : EyeOff,
+            label: "Công bố điểm",
+            value: exam.publish_score ? "Có" : "Không",
+          },
+        ].map((item) => (
+          <Card key={item.label} className="py-4">
+            <CardContent className="px-4">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <item.icon className="h-3.5 w-3.5" />
+                <span className="text-xs">{item.label}</span>
+              </div>
+              <p className="mt-1 text-base font-semibold">{item.value}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cấu hình rút câu theo tệp</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ul className="divide-y">
+            {exam.exam_pool_configs.map((c) => {
+              const available = c.question_pools?.questions?.[0]?.count ?? 0;
+              const pct = available > 0 ? (c.num_questions_to_draw / available) * 100 : 0;
+              return (
+                <li key={c.pool_id} className="flex items-center gap-4 py-3 text-sm">
+                  <span className="flex-1 min-w-0 truncate font-medium">
+                    {c.question_pools?.name}
+                  </span>
+                  <div className="hidden sm:block w-40 h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all"
+                      style={{ width: `${Math.min(100, pct)}%` }}
+                    />
+                  </div>
+                  <span className="text-muted-foreground whitespace-nowrap">
+                    Rút {c.num_questions_to_draw} / {available} câu
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </CardContent>
+      </Card>
     </div>
   );
 }

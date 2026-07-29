@@ -13,20 +13,20 @@ export async function GET(_req: NextRequest, { params }: Params) {
     idParamSchema.parse(examId);
     const db = createAdminClient();
 
-    const { data: exam, error: examErr } = await db
-      .from("exams")
-      .select("duration_minutes")
-      .eq("id", examId)
-      .single();
+    // 2 query độc lập nhau (cả 2 chỉ cần examId) — chạy song song.
+    const [examRes, assignmentsRes] = await Promise.all([
+      db.from("exams").select("duration_minutes").eq("id", examId).single(),
+      db
+        .from("exam_assignments")
+        .select(
+          "id, status, created_at, students(id, code, full_name), exam_sessions!exam_sessions_exam_assignment_id_fkey(id, started_at, submitted_at, status, violation_count, created_at, extra_minutes, invalidated)"
+        )
+        .eq("exam_id", examId)
+        .order("created_at", { ascending: true }),
+    ]);
+    const { data: exam, error: examErr } = examRes;
     if (examErr) throw examErr;
-
-    const { data: assignments, error } = await db
-      .from("exam_assignments")
-      .select(
-        "id, status, created_at, students(id, code, full_name), exam_sessions!exam_sessions_exam_assignment_id_fkey(id, started_at, submitted_at, status, violation_count, created_at, extra_minutes, invalidated)"
-      )
-      .eq("exam_id", examId)
-      .order("created_at", { ascending: true });
+    const { data: assignments, error } = assignmentsRes;
     if (error) throw error;
 
     type SessionRow = {

@@ -15,22 +15,26 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const db = createAdminClient();
 
     // Hồ sơ đầy đủ: thông tin + cờ nghi vấn + toàn bộ đề thi (xuyên khóa).
-    const { data: student, error } = await db
-      .from("students")
-      .select(
-        "id, code, full_name, birth_year, unit, suspicion_flags, created_at, term_id, exam_terms(name, year)"
-      )
-      .eq("id", id)
-      .single();
+    // 2 query đều chỉ cần `id` (đã có từ URL param), không phụ thuộc lẫn nhau.
+    const [studentRes, assignmentsRes] = await Promise.all([
+      db
+        .from("students")
+        .select(
+          "id, code, full_name, birth_year, unit, suspicion_flags, created_at, term_id, exam_terms(name, year)"
+        )
+        .eq("id", id)
+        .single(),
+      db
+        .from("exam_assignments")
+        .select(
+          "id, status, created_at, exams(id, name, duration_minutes, is_active, exam_terms(name, year)), exam_sessions!exam_sessions_exam_assignment_id_fkey(id, status, started_at, submitted_at, violation_count, invalidated, extra_minutes, created_at)"
+        )
+        .eq("student_id", id)
+        .order("created_at", { ascending: false }),
+    ]);
+    const { data: student, error } = studentRes;
     if (error || !student) return jsonError("Không tìm thấy thí sinh", 404);
-
-    const { data: assignments, error: aErr } = await db
-      .from("exam_assignments")
-      .select(
-        "id, status, created_at, exams(id, name, duration_minutes, is_active, exam_terms(name, year)), exam_sessions!exam_sessions_exam_assignment_id_fkey(id, status, started_at, submitted_at, violation_count, invalidated, extra_minutes, created_at)"
-      )
-      .eq("student_id", id)
-      .order("created_at", { ascending: false });
+    const { data: assignments, error: aErr } = assignmentsRes;
     if (aErr) throw aErr;
 
     // Điểm + check-in + thống kê đăng nhập — query riêng, tránh embed sâu.

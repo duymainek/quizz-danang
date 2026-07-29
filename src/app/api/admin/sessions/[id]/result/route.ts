@@ -22,24 +22,22 @@ export async function GET(_req: NextRequest, { params }: Params) {
       .single();
     if (sessionErr || !session) return jsonError("Không tìm thấy lượt thi", 404);
 
-    // Tách truy vấn lấy thông tin thí sinh thay vì embed 2 tầng qua bảng
-    // trung gian exam_assignments — nhất quán với cách xử lý embed sâu ở nơi khác.
-    const { data: assignment } = await db
-      .from("exam_assignments")
-      .select("students(code, full_name)")
-      .eq("id", session.exam_assignment_id)
-      .single();
-    const student = (assignment?.students ?? null) as unknown as {
+    // Thông tin thí sinh (qua exam_assignment_id) và điểm (qua sessionId) không
+    // phụ thuộc lẫn nhau — cả 2 id đều đã có sẵn trước đó — chạy song song.
+    const [assignmentRes, scoreRes] = await Promise.all([
+      db
+        .from("exam_assignments")
+        .select("students(code, full_name)")
+        .eq("id", session.exam_assignment_id)
+        .single(),
+      db.from("scores").select("total_score, detail").eq("session_id", sessionId).maybeSingle(),
+    ]);
+    const student = (assignmentRes.data?.students ?? null) as unknown as {
       code: string;
       full_name: string | null;
     } | null;
-
-    const { data: score, error: scoreErr } = await db
-      .from("scores")
-      .select("total_score, detail")
-      .eq("session_id", sessionId)
-      .maybeSingle();
-    if (scoreErr) throw scoreErr;
+    if (scoreRes.error) throw scoreRes.error;
+    const score = scoreRes.data;
 
     // Cột numeric trả về dạng string qua PostgREST — ép kiểu Number trước khi trả về frontend.
     const normalizedScore = score ? { ...score, total_score: Number(score.total_score) } : null;

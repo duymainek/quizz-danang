@@ -52,13 +52,16 @@ export async function POST(req: NextRequest) {
       .single();
     if (error) throw error;
 
-    await db.from("audit_logs").insert({
-      actor_email: user.email ?? "unknown",
-      action: "create_invite",
-      target_type: "admin_invites",
-      target_id: data.id,
-      metadata: { email: body.email, role: body.role },
-    });
+    void db
+      .from("audit_logs")
+      .insert({
+        actor_email: user.email ?? "unknown",
+        action: "create_invite",
+        target_type: "admin_invites",
+        target_id: data.id,
+        metadata: { email: body.email, role: body.role },
+      })
+      .then(() => {});
 
     return NextResponse.json({ invite: data }, { status: 201 });
   } catch (err) {
