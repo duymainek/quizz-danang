@@ -45,10 +45,23 @@ export async function POST(req: NextRequest) {
     const userAgent = req.headers.get("user-agent");
     const normalizedCode = code.trim().toUpperCase();
 
+    // SBD chỉ duy nhất trong phạm vi 1 kỳ thi, nên phải khớp với kỳ thi
+    // đang active hiện tại (hệ thống đảm bảo chỉ có đúng 1 kỳ active).
+    const { data: activeTerm, error: termError } = await db
+      .from("exam_terms")
+      .select("id")
+      .eq("status", "active")
+      .maybeSingle();
+    if (termError) throw termError;
+    if (!activeTerm) {
+      return jsonError("Hiện không có kỳ thi nào đang mở, vui lòng liên hệ giám thị", 404);
+    }
+
     const { data: student, error } = await db
       .from("students")
       .select("id, code, full_name")
       .eq("code", normalizedCode)
+      .eq("term_id", activeTerm.id)
       .maybeSingle();
     if (error) throw error;
 
