@@ -7,6 +7,15 @@ import { Footer } from "@/components/shared/Footer";
 
 type StudentSummary = { code: string; full_name: string | null };
 
+type StudentPreview = {
+  code: string;
+  full_name: string | null;
+  birth_year: number | null;
+  gender: string | null;
+  phone: string | null;
+  unit: string | null;
+};
+
 type ExamRow = {
   exam_id: string;
   name: string;
@@ -33,8 +42,12 @@ export default function PortalPage() {
   const [loading, setLoading] = useState(true);
   const [code, setCode] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [entering, setEnteringId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<StudentPreview | null>(null);
+  const [fingerprintCache, setFingerprintCache] =
+    useState<Record<string, unknown> | null>(null);
 
   const loadMe = useCallback(async () => {
     setLoading(true);
@@ -61,27 +74,33 @@ export default function PortalPage() {
     loadMe();
   }, [loadMe]);
 
+  async function captureFingerprint(): Promise<Record<string, unknown> | null> {
+    // Fingerprint thu âm thầm — lỗi cũng không chặn đăng nhập.
+    try {
+      const FingerprintJS = (await import("@fingerprintjs/fingerprintjs")).default;
+      const fp = await FingerprintJS.load();
+      const result = await fp.get();
+      return {
+        visitor_id: result.visitorId,
+        screen: `${window.screen.width}x${window.screen.height}`,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        platform: navigator.platform,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // Bước 1: tra cứu thông tin theo mã số — chưa tính là đã đăng nhập, chỉ
+  // hiển thị để thí sinh tự xác nhận đúng là mình trước khi tính phiên.
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     if (!code.trim()) return;
     setLoggingIn(true);
     setError(null);
     try {
-      // Fingerprint thu âm thầm — lỗi cũng không chặn đăng nhập.
-      let fingerprint: Record<string, unknown> | null = null;
-      try {
-        const FingerprintJS = (await import("@fingerprintjs/fingerprintjs")).default;
-        const fp = await FingerprintJS.load();
-        const result = await fp.get();
-        fingerprint = {
-          visitor_id: result.visitorId,
-          screen: `${window.screen.width}x${window.screen.height}`,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          platform: navigator.platform,
-        };
-      } catch {
-        // ignore
-      }
+      const fingerprint = await captureFingerprint();
+      setFingerprintCache(fingerprint);
       const res = await fetch("/api/student/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -89,12 +108,41 @@ export default function PortalPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      await loadMe();
+      setPreview(json.student);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Có lỗi xảy ra");
     } finally {
       setLoggingIn(false);
     }
+  }
+
+  // Bước 2: thí sinh xác nhận đúng thông tin của mình — lúc này mới thật sự
+  // tạo phiên đăng nhập.
+  async function handleConfirm() {
+    if (!preview) return;
+    setConfirming(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/student/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: preview.code, confirm: true, fingerprint: fingerprintCache }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setPreview(null);
+      await loadMe();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Có lỗi xảy ra");
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  function handleReject() {
+    setPreview(null);
+    setCode("");
+    setError(null);
   }
 
   async function handleLogout() {
@@ -136,6 +184,80 @@ export default function PortalPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <p className="text-sm text-slate-500">Đang tải...</p>
+      </div>
+    );
+  }
+
+  if (!student && preview) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 gap-4">
+        <div className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm animate-scale-in">
+          <div className="text-center space-y-1">
+            <h1 className="text-lg font-semibold text-slate-900">Xác nhận đúng là bạn?</h1>
+            <p className="text-sm text-slate-500">
+              Vui lòng kiểm tra kỹ thông tin dưới đây trước khi xác nhận.
+            </p>
+          </div>
+
+          <dl className="text-sm divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
+            <div className="flex justify-between px-3 py-2">
+              <dt className="text-slate-500">Số báo danh</dt>
+              <dd className="font-mono font-medium text-slate-900">{preview.code}</dd>
+            </div>
+            <div className="flex justify-between px-3 py-2">
+              <dt className="text-slate-500">Họ và tên</dt>
+              <dd className="font-medium text-slate-900 text-right">{preview.full_name || "—"}</dd>
+            </div>
+            {preview.birth_year && (
+              <div className="flex justify-between px-3 py-2">
+                <dt className="text-slate-500">Năm sinh</dt>
+                <dd className="text-slate-900">{preview.birth_year}</dd>
+              </div>
+            )}
+            {preview.gender && (
+              <div className="flex justify-between px-3 py-2">
+                <dt className="text-slate-500">Giới tính</dt>
+                <dd className="text-slate-900">{preview.gender}</dd>
+              </div>
+            )}
+            {preview.phone && (
+              <div className="flex justify-between px-3 py-2">
+                <dt className="text-slate-500">Số điện thoại</dt>
+                <dd className="text-slate-900">{preview.phone}</dd>
+              </div>
+            )}
+            {preview.unit && (
+              <div className="flex justify-between px-3 py-2 gap-3">
+                <dt className="text-slate-500 shrink-0">Đơn vị</dt>
+                <dd className="text-slate-900 text-right">{preview.unit}</dd>
+              </div>
+            )}
+          </dl>
+
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2 text-center">
+              {error}
+            </p>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              onClick={handleReject}
+              disabled={confirming}
+              className="flex-1 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium py-2.5 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Không phải tôi
+            </button>
+            <button
+              onClick={handleConfirm}
+              disabled={confirming}
+              className="flex-1 rounded-lg bg-slate-900 text-white text-sm font-medium py-2.5 hover:bg-slate-800 disabled:opacity-50"
+            >
+              {confirming ? "Đang xác nhận..." : "Đúng là tôi"}
+            </button>
+          </div>
+        </div>
+        <Footer />
       </div>
     );
   }

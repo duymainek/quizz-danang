@@ -26,7 +26,7 @@ function clientIp(req: NextRequest): string | null {
 export async function POST(req: NextRequest) {
   try {
     const raw = await req.json();
-    const { code } = studentLoginSchema.parse(raw);
+    const { code, confirm } = studentLoginSchema.parse(raw);
     // Fingerprint là optional, do client gửi kèm — không validate chặt vì
     // đây là tín hiệu silent, thiếu cũng không chặn đăng nhập.
     const fingerprint =
@@ -59,27 +59,61 @@ export async function POST(req: NextRequest) {
 
     const { data: student, error } = await db
       .from("students")
-      .select("id, code, full_name")
+      .select("id, code, full_name, birth_year, gender, phone, unit")
       .eq("code", normalizedCode)
       .eq("term_id", activeTerm.id)
       .maybeSingle();
     if (error) throw error;
 
-    // P6 — log MỌI lần đăng nhập, kể cả sai mã (dò mã là tín hiệu nghi vấn).
+    // Bước 1 (tra cứu, confirm=false): chỉ log lần nhập sai mã (dò mã là tín
+    // hiệu nghi vấn) — KHÔNG log thành công và KHÔNG tạo phiên ở bước này.
+    // Bước 2 (confirm=true): thí sinh đã xem thông tin và xác nhận đúng là
+    // mình — lúc này mới log login_events thành công + tính phiên đăng nhập.
+    if (!student) {
+      void db
+        .from("login_events")
+        .insert({
+          student_id: null,
+          code_input: normalizedCode,
+          success: false,
+          ip_address: ip,
+          user_agent: userAgent,
+          device_id: deviceId,
+          fingerprint,
+        })
+        .then(() => {});
+      return jsonError("Không tìm thấy mã số này, vui lòng kiểm tra lại", 404);
+    }
+
+    if (!confirm) {
+      // Chỉ trả về thông tin để thí sinh xác nhận — chưa set cookie, chưa
+      // tính là đã đăng nhập.
+      return NextResponse.json({
+        confirm_required: true,
+        student: {
+          code: student.code,
+          full_name: student.full_name,
+          birth_year: student.birth_year,
+          gender: student.gender,
+          phone: student.phone,
+          unit: student.unit,
+        },
+      });
+    }
+
+    // P6 — log MỌI lần đăng nhập đã xác nhận.
     void db
       .from("login_events")
       .insert({
-        student_id: student?.id ?? null,
+        student_id: student.id,
         code_input: normalizedCode,
-        success: !!student,
+        success: true,
         ip_address: ip,
         user_agent: userAgent,
         device_id: deviceId,
         fingerprint,
       })
       .then(() => {});
-
-    if (!student) return jsonError("Không tìm thấy mã số này, vui lòng kiểm tra lại", 404);
 
     // Silent detection: SBD này từng đăng nhập thành công trên thiết bị khác?
     const { data: priorDevices } = await db
