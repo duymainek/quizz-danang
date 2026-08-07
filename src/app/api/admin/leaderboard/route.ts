@@ -30,54 +30,65 @@ export async function GET(req: NextRequest) {
       return jsonError("Đề thi không thuộc khóa đang chọn", 422);
     }
 
-    // Query 3 bước, không embed nhiều tầng (tránh lỗi PostgREST khó debug).
-    const { data: sessions, error } = await db
-      .from("exam_sessions")
-      .select("id, started_at, submitted_at, violation_count, status, exam_assignment_id")
-      .eq("exam_id", examId)
-      .eq("invalidated", false) // bài bị hủy kết quả không lên bảng xếp hạng
-      .in("status", ["submitted", "auto_submitted"]);
+    // Lấy theo exam_assignments (1 thí sinh = 1 assignment/đề) rồi chỉ giữ
+    // LƯỢT THI MỚI NHẤT của mỗi assignment — giống hệt logic đã dùng ở
+    // /results và /results/export. Nếu không làm vậy, thí sinh bị admin reset
+    // để thi lại (lượt cũ vẫn giữ nguyên status 'submitted' để phục vụ audit,
+    // chỉ có assignment được mở lại) sẽ bị tính 2 lần trên bảng xếp hạng.
+    const { data: assignments, error } = await db
+      .from("exam_assignments")
+      .select(
+        "id, students(id, code, full_name, unit), exam_sessions!exam_sessions_exam_assignment_id_fkey(id, started_at, submitted_at, violation_count, status, created_at, invalidated)"
+      )
+      .eq("exam_id", examId);
     if (error) throw error;
 
-    const sessionIds = (sessions ?? []).map((s) => s.id);
-    const assignmentIds = (sessions ?? []).map((s) => s.exam_assignment_id);
+    type SessionRow = {
+      id: string;
+      started_at: string;
+      submitted_at: string | null;
+      violation_count: number;
+      status: string;
+      created_at: string;
+      invalidated: boolean;
+    };
+    type Student = { id: string; code: string; full_name: string | null; unit: string | null };
 
+    // Với mỗi assignment, chỉ xét session được TẠO GẦN NHẤT (lượt thi cuối
+    // cùng) — bất kể trạng thái — rồi mới lọc theo điều kiện lên bảng xếp hạng.
+    const latestByAssignment = (assignments ?? [])
+      .map((a) => {
+        const sessions = (a.exam_sessions ?? []) as SessionRow[];
+        const latest = sessions.sort(
+          (x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime()
+        )[0];
+        const student = (a.students as unknown as Student | null) ?? null;
+        return { assignmentId: a.id, student, latest };
+      })
+      .filter(
+        (a) =>
+          a.latest &&
+          !a.latest.invalidated &&
+          (a.latest.status === "submitted" || a.latest.status === "auto_submitted")
+      );
+
+    const sessionIds = latestByAssignment.map((a) => a.latest!.id);
     const scoreBySession = new Map<string, number>();
-    const studentByAssignment = new Map<
-      string,
-      { id: string; code: string; full_name: string | null; unit: string | null }
-    >();
     if (sessionIds.length > 0) {
-      const [scoresRes, assignmentsRes] = await Promise.all([
-        db
-          .from("scores")
-          .select("session_id, total_score, manual_score")
-          .in("session_id", sessionIds),
-        db
-          .from("exam_assignments")
-          .select("id, students(id, code, full_name, unit)")
-          .in("id", assignmentIds),
-      ]);
-      if (scoresRes.error) throw scoresRes.error;
-      if (assignmentsRes.error) throw assignmentsRes.error;
-      for (const s of scoresRes.data ?? []) {
+      const { data: scores, error: scoresErr } = await db
+        .from("scores")
+        .select("session_id, total_score, manual_score")
+        .in("session_id", sessionIds);
+      if (scoresErr) throw scoresErr;
+      for (const s of scores ?? []) {
         // Điểm sửa tay ưu tiên hơn điểm máy chấm.
         scoreBySession.set(s.session_id, Number(s.manual_score ?? s.total_score));
       }
-      for (const a of assignmentsRes.data ?? []) {
-        const st = a.students as unknown as {
-          id: string;
-          code: string;
-          full_name: string | null;
-          unit: string | null;
-        } | null;
-        if (st) studentByAssignment.set(a.id, st);
-      }
     }
 
-    const rows = (sessions ?? [])
-      .map((s) => {
-        const student = studentByAssignment.get(s.exam_assignment_id);
+    const rows = latestByAssignment
+      .map(({ student, latest }) => {
+        const s = latest!;
         const durationMs =
           s.started_at && s.submitted_at
             ? new Date(s.submitted_at).getTime() - new Date(s.started_at).getTime()
