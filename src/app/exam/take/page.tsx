@@ -65,6 +65,12 @@ export default function ExamTakePage() {
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
+  // Luồng auto-nộp do vi phạm: thông báo ngay -> animation nộp bài -> xác
+  // nhận thành công (có nút thử lại nếu mất mạng lúc xác nhận).
+  const [autoSubmitPhase, setAutoSubmitPhase] = useState<
+    "notice" | "verifying" | "success" | "error" | null
+  >(null);
+  const [autoSubmitLabel, setAutoSubmitLabel] = useState("");
   const submittedRef = useRef(false);
   const lastViolationAtRef = useRef<Record<string, number>>({});
   const questionRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -183,8 +189,14 @@ export default function ExamTakePage() {
       const json = await res.json();
       if (!res.ok) return;
       if (json.auto_submitted) {
+        // Server ĐÃ chấm điểm + đổi trạng thái sang auto_submitted ngay trong
+        // request này rồi — không im lặng chuyển trang nữa. Báo cho thí sinh
+        // biết lý do, rồi chạy qua animation xác nhận nộp bài (có retry nếu
+        // bước xác nhận bị mất mạng).
         submittedRef.current = true;
-        router.replace("/exam/done?reason=auto_submitted");
+        log("auto_submit_triggered", { violation_type: type });
+        setAutoSubmitLabel(VIOLATION_LABEL[type] ?? "Phát hiện vi phạm");
+        setAutoSubmitPhase("notice");
         return;
       }
       setWarning({
@@ -196,7 +208,33 @@ export default function ExamTakePage() {
       // (FIFO, có seq) để server vẫn nhận được bản ghi đúng thứ tự khi có mạng.
       syncRef.current?.logEvent("violation_send_failed", { violation_type: type });
     }
-  }, [router]);
+  }, [log]);
+
+  /** Xác nhận lại trạng thái phiên sau khi server báo auto-submit do vi phạm.
+   * Vòng gọi API riêng (không chỉ tin response của /api/exam/violation) để
+   * animation "đang nộp bài" có ý nghĩa thật + có thể retry khi mất mạng. */
+  const verifyAutoSubmit = useCallback(async () => {
+    setAutoSubmitPhase("verifying");
+    try {
+      const res = await fetch("/api/exam/session");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Không xác nhận được trạng thái nộp bài");
+      if (json.status === "in_progress") throw new Error("Chưa cập nhật trạng thái, thử lại");
+      log("auto_submit_verified", { status: json.status });
+      setAutoSubmitPhase("success");
+      setTimeout(() => router.replace("/exam/done?reason=auto_submitted"), 1100);
+    } catch {
+      setAutoSubmitPhase("error");
+    }
+  }, [router, log]);
+
+  // Sau khi hiện thông báo "phát hiện vi phạm" một nhịp ngắn để thí sinh kịp
+  // đọc, tự động chuyển sang bước xác nhận nộp bài.
+  useEffect(() => {
+    if (autoSubmitPhase !== "notice") return;
+    const t = setTimeout(() => void verifyAutoSubmit(), 1400);
+    return () => clearTimeout(t);
+  }, [autoSubmitPhase, verifyAutoSubmit]);
 
   // Hủy timer/listener của offline sync khi rời trang.
   useEffect(() => {
@@ -650,6 +688,84 @@ export default function ExamTakePage() {
           }}
           onLog={(type, payload) => log(type, payload)}
         />
+      )}
+
+      {autoSubmitPhase && (
+        <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center px-4 animate-fade-in">
+          <div className="w-full max-w-xs bg-white rounded-2xl p-6 text-center space-y-4 animate-scale-in">
+            {autoSubmitPhase === "notice" && (
+              <>
+                <div className="mx-auto h-14 w-14 rounded-full flex items-center justify-center text-2xl bg-amber-100 text-amber-600 animate-shake-once">
+                  !
+                </div>
+                <h1 className="text-base font-semibold text-slate-900">Phát hiện vi phạm</h1>
+                <p className="text-sm text-slate-600">{autoSubmitLabel}.</p>
+                <p className="text-sm font-medium text-slate-900">
+                  Bài thi của bạn sẽ được tự động nộp.
+                </p>
+              </>
+            )}
+
+            {autoSubmitPhase === "verifying" && (
+              <>
+                <div className="mx-auto h-14 w-14 rounded-full border-4 border-slate-200 border-t-slate-900 animate-spin" />
+                <h1 className="text-base font-semibold text-slate-900">Đang nộp bài…</h1>
+                <p className="text-sm text-slate-500">Vui lòng đợi trong giây lát.</p>
+                <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                  <div className="h-full w-1/3 rounded-full bg-slate-900 animate-progress-indeterminate" />
+                </div>
+              </>
+            )}
+
+            {autoSubmitPhase === "success" && (
+              <>
+                <svg
+                  className="mx-auto h-14 w-14 text-emerald-500"
+                  viewBox="0 0 56 56"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <circle
+                    className="checkmark-circle"
+                    cx="28"
+                    cy="28"
+                    r="26"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                  />
+                  <path
+                    className="checkmark-check"
+                    d="M17 29l8 8 15-16"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <h1 className="text-base font-semibold text-slate-900">Nộp bài thành công</h1>
+                <p className="text-sm text-slate-500">Đang chuyển trang…</p>
+              </>
+            )}
+
+            {autoSubmitPhase === "error" && (
+              <>
+                <div className="mx-auto h-14 w-14 rounded-full flex items-center justify-center text-2xl bg-amber-100 text-amber-600 animate-shake-once">
+                  !
+                </div>
+                <h1 className="text-base font-semibold text-slate-900">Không thể xác nhận nộp bài</h1>
+                <p className="text-sm text-slate-500">
+                  Bài thi có thể đã được nộp nhưng mất mạng lúc xác nhận lại. Vui lòng thử lại.
+                </p>
+                <button
+                  onClick={() => void verifyAutoSubmit()}
+                  className="w-full rounded-lg bg-slate-900 text-white text-sm font-medium py-2.5 hover:bg-slate-800"
+                >
+                  Thử lại
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
