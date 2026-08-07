@@ -37,6 +37,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       violation_count: number;
       created_at: string;
       extra_minutes?: number;
+      invalidated?: boolean;
     };
 
     const rows = (assignments ?? []).map((a) => {
@@ -58,6 +59,12 @@ export async function GET(_req: NextRequest, { params }: Params) {
         student_name: student?.full_name ?? null,
         status: a.status,
         session_id: latest?.id ?? null,
+        // Trạng thái thật của lượt thi (khác `status` ở trên — đó là trạng
+        // thái assignment, chỉ có 4 giá trị và không phân biệt được nộp thủ
+        // công với bị tự động nộp). Dashboard cần cái này để chỉ hiện nút
+        // "Resume" đúng cho lượt bị auto-submit.
+        session_status: latest?.status ?? null,
+        invalidated: latest?.invalidated ?? false,
         violation_count: latest?.violation_count ?? 0,
         started_at: latest?.started_at ?? null,
         deadline_at: deadlineAt ? new Date(deadlineAt).toISOString() : null,

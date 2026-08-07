@@ -12,6 +12,8 @@ type Row = {
   student_name: string | null;
   status: "unused" | "in_progress" | "submitted" | "reset";
   session_id: string | null;
+  session_status?: string | null;
+  invalidated?: boolean;
   student_id?: string | null;
   violation_count: number;
   started_at: string | null;
@@ -152,6 +154,7 @@ export default function ExamDashboardPage({
       | { action: "extend"; minutes: number }
       | { action: "force_submit" }
       | { action: "invalidate"; reason: string }
+      | { action: "resume"; reason: string }
   ) {
     const res = await fetch(`/api/admin/sessions/${sessionId}/ops`, {
       method: "POST",
@@ -162,6 +165,9 @@ export default function ExamDashboardPage({
     if (!res.ok) {
       alert(json.error);
       return;
+    }
+    if (payload.action === "resume") {
+      alert(`Đã mở lại lượt thi — thí sinh còn ${json.granted_remaining_minutes} phút để làm tiếp.`);
     }
     setSelected(null);
     load();
@@ -270,6 +276,11 @@ export default function ExamDashboardPage({
                     >
                       {STATUS_LABEL[r.status]}
                     </span>
+                    {r.session_status === "auto_submitted" && (
+                      <span className="ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-700">
+                        Auto
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     <RemainingTime deadlineAt={r.deadline_at} status={r.status} />
@@ -365,6 +376,32 @@ export default function ExamDashboardPage({
                 </button>
               </div>
             )}
+            {selected.session_id &&
+              selected.status === "submitted" &&
+              selected.session_status === "auto_submitted" &&
+              !selected.invalidated && (
+                <div className="mb-4 space-y-2">
+                  <p className="text-xs text-slate-500">
+                    Lượt này bị <span className="font-medium text-red-600">tự động nộp</span>{" "}
+                    (hết giờ hoặc vượt số lần vi phạm). Nếu là sự cố bất khả kháng (rớt mạng,
+                    treo máy, vi phạm oan...), có thể mở lại cho thí sinh làm tiếp — giữ nguyên
+                    đề đã random + đáp án đã lưu, chỉ cấp lại đúng thời gian còn thiếu.
+                  </p>
+                  <button
+                    onClick={() => {
+                      const reason = prompt(
+                        "Lý do mở lại lượt thi (bắt buộc, sẽ lưu audit — VD: rớt mạng phòng thi):"
+                      );
+                      if (reason?.trim())
+                        sessionOp(selected.session_id!, { action: "resume", reason: reason.trim() });
+                    }}
+                    className="w-full rounded-md border border-blue-300 text-blue-700 text-sm py-2 hover:bg-blue-50"
+                  >
+                    Mở lại lượt thi (Resume)
+                  </button>
+                </div>
+              )}
+
             {selected.session_id && selected.status === "submitted" && (
               <button
                 onClick={() => {

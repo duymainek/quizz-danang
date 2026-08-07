@@ -15,12 +15,13 @@ const schema = z.discriminatedUnion("action", [
     score: z.number().min(0).max(1000),
     reason: z.string().trim().min(1).max(500),
   }),
+  z.object({ action: z.literal("resume"), reason: z.string().trim().min(1).max(500) }),
 ]);
 
 /**
  * Ops trong ngày thi trên 1 phiên:
  * - extend / force_submit: giám sát viên được phép (xử lý sự cố tại phòng)
- * - invalidate / restore / set_score: chỉ admin
+ * - invalidate / restore / set_score / resume: chỉ admin
  * Mọi thao tác đều ghi audit_logs.
  */
 export async function POST(
@@ -30,13 +31,15 @@ export async function POST(
   try {
     const { id } = await params;
     const body = schema.parse(await req.json());
-    const needResultPerm = ["invalidate", "restore", "set_score"].includes(body.action);
+    const needResultPerm = ["invalidate", "restore", "set_score", "resume"].includes(body.action);
     const { user } = await requirePermission(needResultPerm ? "manage_results" : "ops_day");
     const db = createAdminClient();
 
     const { data: session, error } = await db
       .from("exam_sessions")
-      .select("id, status, extra_minutes, exam_assignment_id, invalidated")
+      .select(
+        "id, status, started_at, submitted_at, extra_minutes, exam_assignment_id, invalidated, exams(duration_minutes)"
+      )
       .eq("id", id)
       .single();
     if (error || !session) return jsonError("Không tìm thấy phiên thi", 404);
@@ -127,6 +130,67 @@ export async function POST(
         if (e) throw e;
         audit("set_manual_score", { score: body.score, reason: body.reason });
         return NextResponse.json({ ok: true });
+      }
+
+      case "resume": {
+        // Mở lại 1 lượt thi đã bị TỰ ĐỘNG nộp (hết giờ hoặc vượt số lần vi
+        // phạm) — dùng khi lý do là bất khả kháng (rớt mạng, sự cố thiết bị,
+        // vi phạm oan...). Khác với "Reset lượt thi": KHÔNG tạo lượt mới,
+        // GIỮ NGUYÊN đề đã random + toàn bộ đáp án đã lưu trong bảng `answers`,
+        // chỉ cấp lại đúng số thời gian còn lại tại thời điểm bị cắt (không
+        // trừ oan thời gian thí sinh bị gián đoạn), và reset bộ đếm vi phạm về
+        // 0 để không bị auto-submit lại ngay (log vi phạm cũ vẫn giữ nguyên
+        // trong violation_logs để audit).
+        if (session.status !== "auto_submitted") {
+          return jsonError(
+            "Chỉ resume được lượt bị TỰ ĐỘNG nộp (hết giờ/vi phạm) — dùng 'Nộp hộ' hoặc 'Hủy kết quả' cho các trường hợp khác",
+            409
+          );
+        }
+        if (session.invalidated) {
+          return jsonError("Lượt thi đã bị hủy kết quả, không thể resume", 409);
+        }
+        const exam = session.exams as unknown as { duration_minutes: number } | null;
+        if (!exam) throw new Error("Không tìm thấy thông tin đề thi của phiên này");
+
+        const originalDeadline =
+          new Date(session.started_at).getTime() +
+          (exam.duration_minutes + (session.extra_minutes ?? 0)) * 60_000;
+        const cutoffAt = session.submitted_at
+          ? new Date(session.submitted_at).getTime()
+          : originalDeadline;
+        // Ít nhất 1 phút để thí sinh kịp thao tác lại, phòng trường hợp bị
+        // cắt đúng lúc gần hết giờ.
+        const remainingMs = Math.max(originalDeadline - cutoffAt, 60_000);
+        const newDeadline = Date.now() + remainingMs;
+        const newExtraMinutes =
+          Math.ceil((newDeadline - new Date(session.started_at).getTime()) / 60_000) -
+          exam.duration_minutes;
+
+        const { error: e } = await db
+          .from("exam_sessions")
+          .update({
+            status: "in_progress",
+            submitted_at: null,
+            extra_minutes: newExtraMinutes,
+            violation_count: 0,
+          })
+          .eq("id", id)
+          .eq("status", "auto_submitted");
+        if (e) throw e;
+
+        await db
+          .from("exam_assignments")
+          .update({ status: "in_progress" })
+          .eq("id", session.exam_assignment_id);
+
+        // Điểm đã chấm lúc auto-submit không còn đúng nữa vì thí sinh sẽ làm
+        // tiếp — xoá để tránh hiển thị nhầm điểm cũ trước khi nộp lại thật.
+        await db.from("scores").delete().eq("session_id", id);
+
+        const grantedMinutes = Math.round(remainingMs / 60_000);
+        audit("resume_session", { reason: body.reason, granted_remaining_minutes: grantedMinutes });
+        return NextResponse.json({ ok: true, granted_remaining_minutes: grantedMinutes });
       }
     }
   } catch (err) {
