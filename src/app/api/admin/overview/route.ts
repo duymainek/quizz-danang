@@ -97,7 +97,14 @@ export async function GET() {
 
     // Query từng bước, không embed nhiều tầng (dễ lỗi PostgREST khó debug).
     let recentSubmissionRows: { submitted_at: string | null }[] = [];
-    let scoreRows: { total_score: number }[] = [];
+    let scoreRows: {
+      total_score: number;
+      session_id: string;
+      exam_id: string;
+      code: string;
+      full_name: string | null;
+      exam_name: string;
+    }[] = [];
     let sessionRows: {
       id: string;
       status: string;
@@ -135,37 +142,63 @@ export async function GET() {
       sessionRows = sessionsRes.data ?? [];
       examNameById = new Map((examsNameRes.data ?? []).map((e) => [e.id, e.name]));
 
-      // Điểm: lấy id session của khóa trước, rồi query scores theo session_id.
-      // Tên/mã thí sinh của các phiên gần nhất chỉ cần assignmentIds đã có sẵn
-      // từ sessionRows — độc lập với việc lấy session ids/scores, chạy song song.
-      const assignmentIds = sessionRows.map((s) => s.exam_assignment_id);
-      const [sessionIdsRes, assignmentsRes] = await Promise.all([
-        db.from("exam_sessions").select("id").in("exam_id", termExamIds).eq("invalidated", false),
-        assignmentIds.length > 0
-          ? db.from("exam_assignments").select("id, students(code, full_name)").in("id", assignmentIds)
-          : Promise.resolve({ data: [], error: null }),
-      ]);
-      if (sessionIdsRes.error) throw sessionIdsRes.error;
-      if (assignmentsRes.error) throw assignmentsRes.error;
+      // Điểm: lấy TOÀN BỘ session hợp lệ (không riêng 8 phiên gần nhất) của
+      // khóa để tính phân bố điểm — dùng embed quan hệ (scores, exam_assignments
+      // -> students) trực tiếp trong 1 query thay vì .in("id", [...]) với vài
+      // trăm ID (URL PostgREST GET sẽ vượt quá 16KB header, gây lỗi
+      // HeadersOverflowError khi khóa có nhiều thí sinh × nhiều đề).
+      // exam_assignments có 2 FK trỏ tới exam_sessions (exam_assignment_id
+      // NGƯỢC LẠI từ exam_sessions, và exam_assignments.reuse_session_id) —
+      // PostgREST không tự chọn được quan hệ nào nên phải chỉ định rõ bằng
+      // tên constraint (theo đúng convention đã dùng ở các route khác trong
+      // repo, ví dụ leaderboard/route.ts) thay vì tên cột.
+      const scoredSessionsRes = await db
+        .from("exam_sessions")
+        .select(
+          "id, exam_id, exam_assignment_id, scores(total_score, manual_score), exam_assignments!exam_sessions_exam_assignment_id_fkey(students(code, full_name))"
+        )
+        .in("exam_id", termExamIds)
+        .eq("invalidated", false);
+      if (scoredSessionsRes.error) throw scoredSessionsRes.error;
 
-      const ids = (sessionIdsRes.data ?? []).map((s) => s.id);
-      if (ids.length > 0) {
-        const { data: scores, error: scErr } = await db
-          .from("scores")
-          .select("total_score, manual_score, session_id")
-          .in("session_id", ids);
-        if (scErr) throw scErr;
-        scoreRows = (scores ?? []).map((s) => ({
-          total_score: Number(
-            (s as { manual_score: number | null }).manual_score ?? s.total_score
-          ),
-        }));
-      }
+      // recent_sessions (8 phiên gần nhất) vẫn cần tra thí sinh riêng vì
+      // sessionRows có thể chứa phiên bị invalidated (không nằm trong
+      // scoredSessionsRes) — giữ nguyên logic cũ cho phần này.
+      const recentAssignmentIds = sessionRows.map((s) => s.exam_assignment_id);
+      const assignmentsRes =
+        recentAssignmentIds.length > 0
+          ? await db
+              .from("exam_assignments")
+              .select("id, students(code, full_name)")
+              .in("id", recentAssignmentIds)
+          : { data: [], error: null };
+      if (assignmentsRes.error) throw assignmentsRes.error;
 
       for (const a of assignmentsRes.data ?? []) {
         const st = a.students as unknown as { code: string; full_name: string | null } | null;
         if (st) studentByAssignment.set(a.id, st);
       }
+
+      scoreRows = (scoredSessionsRes.data ?? []).flatMap((s) => {
+        // scores.session_id có unique constraint -> PostgREST coi là quan hệ
+        // 1-1, trả về 1 OBJECT chứ không phải mảng (khác các embed hasMany
+        // khác trong file này) — KHÔNG được lấy [0] như mảng.
+        const score = s.scores as unknown as { total_score: number; manual_score: number | null } | null;
+        if (!score) return [];
+        const student = (s.exam_assignments as unknown as {
+          students: { code: string; full_name: string | null } | null;
+        } | null)?.students;
+        return [
+          {
+            total_score: Number(score.manual_score ?? score.total_score),
+            session_id: s.id,
+            exam_id: s.exam_id,
+            code: student?.code ?? "",
+            full_name: student?.full_name ?? null,
+            exam_name: examNameById.get(s.exam_id) ?? "",
+          },
+        ];
+      });
     }
 
     // Gom lượt nộp theo ngày (giờ VN).
@@ -186,15 +219,30 @@ export async function GET() {
       count,
     }));
 
-    // Histogram điểm theo khoảng 0-2, 2-4, ... 8-10 (thang mặc định 10).
-    const buckets = [0, 0, 0, 0, 0];
+    // Histogram điểm — mỗi mốc nhảy 1 điểm: 0–1, 1–2, ... 9–10 (thang mặc định
+    // 10). Điểm tối đa 10 gộp vào mốc cuối 9–10 thay vì tạo bucket 10–11 lẻ.
+    const BUCKET_COUNT = 10;
+    const buckets = Array.from({ length: BUCKET_COUNT }, () => 0);
     for (const s of scoreRows) {
       const v = Number(s.total_score ?? 0);
-      buckets[Math.min(4, Math.max(0, Math.floor(v / 2)))]++;
+      buckets[Math.min(BUCKET_COUNT - 1, Math.max(0, Math.floor(v)))]++;
     }
     const score_distribution = buckets.map((count, i) => ({
-      range: `${i * 2}–${i * 2 + 2}`,
+      range: `${i}–${i + 1}`,
+      min: i,
+      max: i + 1,
       count,
+    }));
+
+    // Chi tiết từng bài đã chấm — để admin bấm vào 1 cột trên biểu đồ phân bố
+    // điểm và lọc ra danh sách thí sinh + đề thi đạt đúng mốc điểm đó.
+    const score_details = scoreRows.map((s) => ({
+      session_id: s.session_id,
+      exam_id: s.exam_id,
+      code: s.code,
+      full_name: s.full_name,
+      exam_name: s.exam_name,
+      total_score: s.total_score,
     }));
 
     const recent_sessions = sessionRows.map((s) => ({
@@ -211,6 +259,7 @@ export async function GET() {
     return NextResponse.json({
       submissions_by_day,
       score_distribution,
+      score_details,
       recent_sessions,
       total_exams: totalExams.count ?? 0,
       active_exams: activeExams.count ?? 0,

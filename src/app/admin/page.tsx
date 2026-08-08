@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useCachedFetch } from "@/lib/use-cached-fetch";
 import Link from "next/link";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis } from "recharts";
@@ -29,7 +31,15 @@ type Overview = {
   submitted_today: number;
   violations_today: number;
   submissions_by_day: { date: string; count: number }[];
-  score_distribution: { range: string; count: number }[];
+  score_distribution: { range: string; min: number; max: number; count: number }[];
+  score_details: {
+    session_id: string;
+    exam_id: string;
+    code: string;
+    full_name: string | null;
+    exam_name: string;
+    total_score: number;
+  }[];
   recent_sessions: {
     id: string;
     status: string;
@@ -115,6 +125,7 @@ function StatCard({
 }
 
 export default function AdminOverviewPage() {
+  const router = useRouter();
   // Cache + tự refresh mỗi 30s (dashboard cần realtime nhẹ).
   const { data, error, isLoading: loading } = useCachedFetch<Overview>(
     "/api/admin/overview",
@@ -125,6 +136,20 @@ export default function AdminOverviewPage() {
     60_000
   );
   const suspicion = suspicionData?.rows ?? null;
+  // Mốc điểm đang chọn trên biểu đồ "Phân bố điểm" (bấm cột để lọc danh sách
+  // thí sinh + đề đạt đúng mốc đó bên dưới; bấm lại cùng cột để bỏ chọn).
+  // Dùng chỉ số bucket (khớp đúng cách server tính floor(score), điểm 10 gộp
+  // vào mốc cuối) thay vì so sánh min/max trực tiếp để tránh lệch biên.
+  const [selectedRange, setSelectedRange] = useState<{ range: string; min: number; max: number } | null>(
+    null
+  );
+  const filteredByScore =
+    selectedRange && data
+      ? data.score_details.filter((d) => {
+          const bucketIndex = Math.min(9, Math.max(0, Math.floor(Number(d.total_score))));
+          return bucketIndex === selectedRange.min;
+        })
+      : null;
 
   if (error) {
     return <p className="text-sm text-destructive">{error}</p>;
@@ -199,7 +224,9 @@ export default function AdminOverviewPage() {
         <Card>
           <CardHeader>
             <CardTitle>Phân bố điểm</CardTitle>
-            <CardDescription>Toàn bộ bài đã chấm trong khóa</CardDescription>
+            <CardDescription>
+              Toàn bộ bài đã chấm trong khóa, mỗi mốc 1 điểm — bấm vào cột để xem chi tiết
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -210,13 +237,77 @@ export default function AdminOverviewPage() {
                   <CartesianGrid vertical={false} />
                   <XAxis dataKey="range" tickLine={false} axisLine={false} />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="count" fill="var(--color-count)" radius={4} />
+                  <Bar
+                    dataKey="count"
+                    fill="var(--color-count)"
+                    radius={4}
+                    className="cursor-pointer"
+                    onClick={(bar: {
+                      payload?: { range: string; min: number; max: number; count: number };
+                    }) => {
+                      const entry = bar?.payload;
+                      if (!entry || entry.count === 0) return;
+                      setSelectedRange((cur) =>
+                        cur?.range === entry.range
+                          ? null
+                          : { range: entry.range, min: entry.min, max: entry.max }
+                      );
+                    }}
+                  />
                 </BarChart>
               </ChartContainer>
             )}
           </CardContent>
         </Card>
       </div>
+
+      {selectedRange && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Mốc điểm {selectedRange.range}</CardTitle>
+            <CardDescription>
+              {filteredByScore?.length ?? 0} bài đạt mốc điểm này — theo từng đề thi
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {(filteredByScore?.length ?? 0) === 0 ? (
+              <p className="text-sm text-muted-foreground">Không có bài nào ở mốc điểm này.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>SBD</TableHead>
+                    <TableHead>Tên</TableHead>
+                    <TableHead>Đề thi</TableHead>
+                    <TableHead className="text-right">Điểm</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredByScore!
+                    .slice()
+                    .sort((a, b) => a.exam_name.localeCompare(b.exam_name) || a.code.localeCompare(b.code))
+                    .map((r) => (
+                      <TableRow
+                        key={r.session_id}
+                        className="cursor-pointer hover:bg-accent"
+                        onClick={() => router.push(`/admin/exams/${r.exam_id}/results/${r.session_id}`)}
+                      >
+                        <TableCell className="font-mono text-xs text-primary hover:underline">
+                          {r.code}
+                        </TableCell>
+                        <TableCell>{r.full_name ?? "—"}</TableCell>
+                        <TableCell>{r.exam_name}</TableCell>
+                        <TableCell className="text-right font-medium">
+                          {Number(r.total_score).toFixed(2)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 grid-cols-1 lg:grid-cols-3">
         <Card className="lg:col-span-2">

@@ -17,6 +17,7 @@ import {
   ScrollText,
   Radio,
   BarChart3,
+  Download,
 } from "lucide-react";
 import { CommandMenu } from "@/components/admin/CommandMenu";
 import { ThemeToggle } from "@/components/admin/ThemeToggle";
@@ -96,6 +97,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
         permission: "view_results",
       },
       { href: "/admin/leaderboard", title: "Leaderboard", icon: Trophy, permission: "view_results" },
+      { href: "/admin/export", title: "Xuất báo cáo", icon: Download, permission: "view_results" },
     ],
   },
   {

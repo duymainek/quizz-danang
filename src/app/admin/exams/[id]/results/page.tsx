@@ -43,7 +43,9 @@ export default function ExamResultsPage({
   const [rows, setRows] = useState<Row[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [sortDesc, setSortDesc] = useState(true);
+  const [sort, setSort] = useState<"score_desc" | "score_asc" | "duration_desc" | "duration_asc">(
+    "score_desc"
+  );
 
   async function load() {
     try {
@@ -108,9 +110,18 @@ export default function ExamResultsPage({
   }
 
   const sorted = [...rows].sort((a, b) => {
+    if (sort === "duration_desc" || sort === "duration_asc") {
+      // Chưa có thời gian (chưa nộp) luôn xếp cuối bất kể chiều sort.
+      const av = a.duration_seconds ?? -1;
+      const bv = b.duration_seconds ?? -1;
+      if (av === -1 && bv === -1) return 0;
+      if (av === -1) return 1;
+      if (bv === -1) return -1;
+      return sort === "duration_desc" ? bv - av : av - bv;
+    }
     const av = a.total_score ?? -1;
     const bv = b.total_score ?? -1;
-    return sortDesc ? bv - av : av - bv;
+    return sort === "score_desc" ? bv - av : av - bv;
   });
 
   return (
@@ -168,11 +179,16 @@ export default function ExamResultsPage({
                 <th className="px-4 py-2 font-medium">Trạng thái</th>
                 <th
                   className="px-4 py-2 font-medium cursor-pointer select-none"
-                  onClick={() => setSortDesc((v) => !v)}
+                  onClick={() => setSort(sort === "score_desc" ? "score_asc" : "score_desc")}
                 >
-                  Điểm {sortDesc ? "↓" : "↑"}
+                  Điểm {sort === "score_desc" ? "↓" : sort === "score_asc" ? "↑" : ""}
                 </th>
-                <th className="px-4 py-2 font-medium">Thời gian làm bài</th>
+                <th
+                  className="px-4 py-2 font-medium cursor-pointer select-none"
+                  onClick={() => setSort(sort === "duration_desc" ? "duration_asc" : "duration_desc")}
+                >
+                  Thời gian làm bài {sort === "duration_desc" ? "↓" : sort === "duration_asc" ? "↑" : ""}
+                </th>
                 <th className="px-4 py-2 font-medium">Vi phạm</th>
                 <th className="px-4 py-2"></th>
               </tr>
