@@ -45,6 +45,7 @@ const EVENT_LABEL: Record<string, string> = {
   submit_error: "Nộp bài lỗi",
   network_offline: "Mất kết nối mạng",
   network_online: "Có kết nối mạng trở lại",
+  violation: "⚠️ Vi phạm giám sát",
 };
 
 const EVENT_COLOR: Record<string, string> = {
@@ -52,6 +53,15 @@ const EVENT_COLOR: Record<string, string> = {
   submit_error: "border-red-300 bg-red-50",
   network_offline: "border-amber-300 bg-amber-50",
   submit_success: "border-emerald-300 bg-emerald-50",
+  violation: "border-red-400 bg-red-50",
+};
+
+const VIOLATION_TYPE_LABEL: Record<string, string> = {
+  tab_hidden: "Chuyển tab / rời màn hình",
+  window_blur: "Rời cửa sổ làm bài",
+  fullscreen_exit: "Thoát toàn màn hình",
+  copy_paste: "Copy/Paste",
+  beforeunload: "Cố đóng/tải lại trang",
 };
 
 function optionsLabel(selected: unknown): string {
@@ -79,6 +89,10 @@ function describeEvent(ev: SessionEvent, questionLabel: (id: string) => string):
       return `${questionLabel(String(p.question_id ?? ""))}: đã lưu lại thành công.`;
     case "submit_error":
       return p.error ? `Lỗi: ${p.error}` : "Nộp bài thất bại, thí sinh có thể đã thử lại.";
+    case "violation": {
+      const label = VIOLATION_TYPE_LABEL[String(p.violation_type ?? "")] ?? String(p.violation_type ?? "");
+      return p.dismissed ? `${label} (đã được admin bỏ qua)` : label;
+    }
     case "submit_attempt":
     case "submit_success":
     case "network_offline":

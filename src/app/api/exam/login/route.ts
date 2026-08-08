@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
     // status === 'in_progress': tìm session đang chạy để cấp lại token (resume sau reload/mất mạng).
     const { data: session, error: sessionErr } = await db
       .from("exam_sessions")
-      .select("id, started_at, status")
+      .select("id, started_at, status, extra_minutes")
       .eq("exam_assignment_id", assignment.id)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -87,7 +87,12 @@ export async function POST(req: NextRequest) {
     }
 
     const startedAt = new Date(session.started_at).getTime();
-    const deadline = startedAt + exam.duration_minutes * 60_000;
+    // QUAN TRỌNG: phải cộng thêm extra_minutes (do admin Extend/Resume cấp) —
+    // thiếu dòng này thì mọi phiên đã được gia hạn/resume sẽ bị tính hết giờ
+    // theo đúng 20 phút gốc kể từ started_at ban đầu (dù started_at có thể đã
+    // là nhiều giờ trước), khiến thí sinh bấm "Tiếp tục làm bài" là bị tự động
+    // nộp lại ngay lập tức bất kể admin đã cấp thêm bao nhiêu phút.
+    const deadline = startedAt + (exam.duration_minutes + (session.extra_minutes ?? 0)) * 60_000;
     if (Date.now() > deadline) {
       await scoreSession(session.id);
       await db
@@ -112,7 +117,7 @@ export async function POST(req: NextRequest) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: exam.duration_minutes * 60 + 3600,
+      maxAge: (exam.duration_minutes + (session.extra_minutes ?? 0)) * 60 + 3600,
     });
 
     return NextResponse.json({ phase: "in_progress", exam: examSummary, student: studentSummary });
