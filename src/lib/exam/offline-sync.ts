@@ -49,6 +49,7 @@ export class OfflineSync {
   private flushing = false;
   private eventFlushing = false;
   private destroyed = false;
+  private examEndedListeners: (() => void)[] = [];
   private onOnline = () => {
     this.retryDelay = RETRY_BASE_MS;
     void this.flushAll();
@@ -81,8 +82,19 @@ export class OfflineSync {
     this.stateListeners.push(cb);
   }
 
+  /** Gọi khi server báo bài thi đã kết thúc (409) trong lúc đang lưu đáp án
+   * — khác hẳn mất mạng, dùng để trang chủ động khoá màn hình/điều hướng
+   * ngay thay vì hiện "Mất kết nối" gây hiểu lầm. */
+  onExamEnded(cb: () => void) {
+    this.examEndedListeners.push(cb);
+  }
+
   private emit(s: SaveState) {
     this.stateListeners.forEach((cb) => cb(s));
+  }
+
+  private emitExamEnded() {
+    this.examEndedListeners.forEach((cb) => cb());
   }
 
   private persistAnswers() {
@@ -114,8 +126,8 @@ export class OfflineSync {
     this.answers[questionId] = { selected, dirty: true, updated_at: Date.now() };
     this.persistAnswers();
     this.emit("saving");
-    const ok = await this.sendAnswer(questionId, selected);
-    if (ok) {
+    const result = await this.sendAnswer(questionId, selected);
+    if (result === "ok") {
       const cur = this.answers[questionId];
       // Chỉ clear dirty nếu không có lần chọn mới hơn trong lúc đang gửi.
       if (cur && cur.selected === selected) {
@@ -126,21 +138,37 @@ export class OfflineSync {
       this.retryDelay = RETRY_BASE_MS;
       return true;
     }
+    if (result === "ended") {
+      // Server từ chối vì bài thi ĐÃ KẾT THÚC (vi phạm/hết giờ vừa xảy ra) —
+      // KHÔNG phải mất mạng. Cố lưu tiếp là vô nghĩa (sẽ luôn bị từ chối),
+      // nên dừng ngay, không đưa vào hàng đợi retry, không hiện "Mất kết nối"
+      // gây hiểu lầm — để trang xử lý điều hướng sang màn hình auto-nộp.
+      const cur = this.answers[questionId];
+      if (cur) cur.dirty = false;
+      this.persistAnswers();
+      if (!this.hasDirty()) this.emit("saved");
+      this.emitExamEnded();
+      return false;
+    }
     this.emit("offline");
     this.scheduleRetry();
     return false;
   }
 
-  private async sendAnswer(questionId: string, selected: number[]): Promise<boolean> {
+  private async sendAnswer(questionId: string, selected: number[]): Promise<"ok" | "ended" | "error"> {
     try {
       const res = await fetch("/api/exam/answer", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question_id: questionId, selected_options: selected }),
       });
-      return res.ok;
+      if (res.ok) return "ok";
+      // 409 = "Bài thi đã kết thúc, không thể lưu thêm đáp án" (xem
+      // /api/exam/answer) — tín hiệu rõ ràng, không phải lỗi mạng.
+      if (res.status === 409) return "ended";
+      return "error";
     } catch {
-      return false;
+      return "error";
     }
   }
 
@@ -207,17 +235,32 @@ export class OfflineSync {
     this.emit("saving");
     try {
       let allOk = true;
+      let ended = false;
       for (const { question_id, selected_options } of this.getDirtyAnswers()) {
-        const ok = await this.sendAnswer(question_id, selected_options);
-        if (ok) {
+        const result = await this.sendAnswer(question_id, selected_options);
+        if (result === "ok") {
           const cur = this.answers[question_id];
           if (cur) cur.dirty = false;
+        } else if (result === "ended") {
+          // Bài thi đã kết thúc — mọi đáp án dirty còn lại cũng sẽ bị từ chối
+          // y hệt, dọn sạch cờ dirty luôn thay vì lặp lại vô ích, không tính
+          // là lỗi mạng.
+          ended = true;
+          Object.values(this.answers).forEach((a) => {
+            a.dirty = false;
+          });
+          break;
         } else {
           allOk = false;
           break;
         }
       }
       this.persistAnswers();
+      if (ended) {
+        this.emitExamEnded();
+        if (!this.hasDirty()) this.emit("saved");
+        return !this.hasDirty();
+      }
       if (allOk) allOk = await this.flushEvents();
       if (allOk && !this.hasDirty()) {
         this.emit("saved");

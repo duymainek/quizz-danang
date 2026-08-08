@@ -20,6 +20,12 @@ function DoneContent() {
   const [student, setStudent] = useState<{ code: string; student_name: string | null } | null>(
     null
   );
+  // Số câu đã có đáp án trên tổng số câu — cho thí sinh tự đối chiếu ngay sau
+  // khi nộp, tránh thắc mắc/hoang mang không biết bài mình có được ghi nhận
+  // đủ hay không (đặc biệt sau các ca bị auto-nộp do vi phạm).
+  const [answerStats, setAnswerStats] = useState<{ answered: number; total: number } | null>(
+    null
+  );
 
   useEffect(() => {
     // Cookie phiên thi vẫn còn (nếu vừa nộp từ /exam/take) nên vẫn lấy được
@@ -29,6 +35,12 @@ function DoneContent() {
       .then((r) => (r.ok ? r.json() : null))
       .then((json) => {
         if (json?.student) setStudent(json.student);
+        if (Array.isArray(json?.questions)) {
+          const answered = (json.answers ?? []).filter(
+            (a: { selected_options: number[] }) => (a.selected_options?.length ?? 0) > 0
+          ).length;
+          setAnswerStats({ answered, total: json.questions.length });
+        }
       })
       .catch(() => {});
   }, []);
@@ -76,6 +88,25 @@ function DoneContent() {
           </p>
         )}
         <p className="text-sm text-slate-600">{message}</p>
+
+        {answerStats && (
+          <div
+            className={`rounded-xl px-4 py-3 text-sm font-medium ${
+              answerStats.answered === answerStats.total
+                ? "bg-emerald-50 text-emerald-700"
+                : "bg-amber-50 text-amber-700"
+            }`}
+          >
+            Đã ghi nhận {answerStats.answered}/{answerStats.total} câu trả lời
+            {answerStats.answered < answerStats.total && (
+              <p className="mt-1 text-xs font-normal">
+                Còn {answerStats.total - answerStats.answered} câu chưa kịp trả lời trước khi
+                nộp bài.
+              </p>
+            )}
+          </div>
+        )}
+
         <p className="text-xs text-slate-400">
           Kết quả sẽ do giám thị/admin công bố. Bạn có thể đóng trang này.
         </p>

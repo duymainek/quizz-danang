@@ -65,6 +65,11 @@ export default function ExamTakePage() {
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
+  // Khoá tạm màn hình câu hỏi ngay khi PHÁT HIỆN vi phạm ở trình duyệt (trước
+  // cả khi có phản hồi server) — tránh khoảng hở thí sinh vẫn chọn thêm đáp
+  // án trong lúc chờ, các lựa chọn đó chắc chắn bị server từ chối vì đề đã
+  // kết thúc, gây hiểu lầm "mất kết nối" trong khi bản chất là bài đã bị cắt.
+  const [checkingViolation, setCheckingViolation] = useState(false);
   // Luồng auto-nộp do vi phạm: thông báo ngay -> animation nộp bài -> xác
   // nhận thành công (có nút thử lại nếu mất mạng lúc xác nhận).
   const [autoSubmitPhase, setAutoSubmitPhase] = useState<
@@ -100,6 +105,19 @@ export default function ExamTakePage() {
       const sync = syncRef.current ?? new OfflineSync(json.student.code);
       syncRef.current = sync;
       sync.onState(setSaveState);
+      // Server từ chối lưu đáp án vì bài thi đã kết thúc (vi phạm/hết giờ vừa
+      // xảy ra ở 1 request khác) — không phải mất mạng. Trước đây trường hợp
+      // này bị hiểu nhầm thành "Mất kết nối" và cứ lặng lẽ thử lại vô ích,
+      // trong khi màn hình câu hỏi vẫn hiện cho thí sinh chọn tiếp — các lựa
+      // chọn đó không bao giờ được lưu. Giờ chủ động khoá màn hình + báo rõ
+      // lý do ngay khi phát hiện.
+      sync.onExamEnded(() => {
+        if (submittedRef.current) return;
+        submittedRef.current = true;
+        log("exam_ended_detected_via_answer_save");
+        setAutoSubmitLabel("Bài thi đã kết thúc");
+        setAutoSubmitPhase("notice");
+      });
 
       const serverAnswers = Object.fromEntries(
         (json.answers as { question_id: string; selected_options: number[] }[]).map(
@@ -129,7 +147,7 @@ export default function ExamTakePage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, log]);
 
   useEffect(() => {
     loadSession();
@@ -180,6 +198,9 @@ export default function ExamTakePage() {
     if (now - last < 1500) return; // debounce cùng loại vi phạm trong 1.5s
     lastViolationAtRef.current[type] = now;
 
+    // Khoá màn hình NGAY LẬP TỨC (trước khi biết kết quả từ server) — nếu vi
+    // phạm này không đủ để auto-submit thì mở khoá lại ngay khi có phản hồi.
+    setCheckingViolation(true);
     try {
       const res = await fetch("/api/exam/violation", {
         method: "POST",
@@ -187,7 +208,10 @@ export default function ExamTakePage() {
         body: JSON.stringify({ type }),
       });
       const json = await res.json();
-      if (!res.ok) return;
+      if (!res.ok) {
+        setCheckingViolation(false);
+        return;
+      }
       if (json.auto_submitted) {
         // Server ĐÃ chấm điểm + đổi trạng thái sang auto_submitted ngay trong
         // request này rồi — không im lặng chuyển trang nữa. Báo cho thí sinh
@@ -199,6 +223,8 @@ export default function ExamTakePage() {
         setAutoSubmitPhase("notice");
         return;
       }
+      // Vi phạm chưa đủ để auto-submit (còn lượt) — mở khoá màn hình lại.
+      setCheckingViolation(false);
       setWarning({
         message: VIOLATION_LABEL[type] ?? "Phát hiện vi phạm",
         remaining: json.remaining,
@@ -206,6 +232,7 @@ export default function ExamTakePage() {
     } catch {
       // Mất mạng lúc gửi vi phạm — không chặn thí sinh; ghi vào offline queue
       // (FIFO, có seq) để server vẫn nhận được bản ghi đúng thứ tự khi có mạng.
+      setCheckingViolation(false);
       syncRef.current?.logEvent("violation_send_failed", { violation_type: type });
     }
   }, [log]);
@@ -311,6 +338,10 @@ export default function ExamTakePage() {
   }
 
   function toggleOption(question: Question, optionIdx: number) {
+    // Đang chờ server xác nhận 1 vi phạm vừa phát hiện — chặn chọn thêm để
+    // tránh lựa chọn chắc chắn bị từ chối (bài có thể đã kết thúc), tránh
+    // hiện tượng "chọn được nhưng không bao giờ lưu, báo nhầm mất kết nối".
+    if (checkingViolation) return;
     const current = answers[question.id] ?? [];
     const isFirstSelect = current.length === 0;
     let next: number[];
@@ -485,6 +516,13 @@ export default function ExamTakePage() {
           </div>
         </div>
       </header>
+
+      {checkingViolation && !autoSubmitPhase && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-800 flex items-center gap-2 animate-slide-down">
+          <span className="h-3.5 w-3.5 rounded-full border-2 border-amber-400 border-t-transparent animate-spin shrink-0" />
+          Đang kiểm tra... tạm khoá chọn đáp án trong giây lát.
+        </div>
+      )}
 
       {warning && (
         <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700 flex items-center justify-between animate-slide-down">
