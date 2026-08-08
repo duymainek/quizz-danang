@@ -154,7 +154,7 @@ export default function ExamDashboardPage({
       | { action: "extend"; minutes: number }
       | { action: "force_submit" }
       | { action: "invalidate"; reason: string }
-      | { action: "resume"; reason: string }
+      | { action: "resume"; minutes: number; reason: string }
   ) {
     const res = await fetch(`/api/admin/sessions/${sessionId}/ops`, {
       method: "POST",
@@ -167,7 +167,7 @@ export default function ExamDashboardPage({
       return;
     }
     if (payload.action === "resume") {
-      alert(`Đã mở lại lượt thi — thí sinh còn ${json.granted_remaining_minutes} phút để làm tiếp.`);
+      alert(`Đã mở lại lượt thi — thí sinh có ${json.granted_minutes} phút để làm tiếp, tính từ bây giờ.`);
     }
     setSelected(null);
     load();
@@ -385,15 +385,31 @@ export default function ExamDashboardPage({
                     Lượt này bị <span className="font-medium text-red-600">tự động nộp</span>{" "}
                     (hết giờ hoặc vượt số lần vi phạm). Nếu là sự cố bất khả kháng (rớt mạng,
                     treo máy, vi phạm oan...), có thể mở lại cho thí sinh làm tiếp — giữ nguyên
-                    đề đã random + đáp án đã lưu, chỉ cấp lại đúng thời gian còn thiếu.
+                    đề đã random + đáp án đã lưu. Cấp lại thời gian TỰ NHẬP (không tự tính từ
+                    thời điểm bị cắt — nếu lượt trước bị cắt do hết giờ tự nhiên thì thời gian
+                    còn lại lúc đó gần như bằng 0, cấp tự động sẽ không đủ để làm tiếp).
                   </p>
                   <button
                     onClick={() => {
+                      const minutesInput = prompt(
+                        "Cấp lại bao nhiêu phút cho thí sinh làm tiếp, tính từ bây giờ? (đề xuất 5-15 phút tuỳ đề còn nhiều/ít câu)",
+                        "10"
+                      );
+                      if (!minutesInput) return;
+                      const minutes = Number(minutesInput);
+                      if (!Number.isFinite(minutes) || minutes < 1 || minutes > 120) {
+                        alert("Số phút không hợp lệ (1-120)");
+                        return;
+                      }
                       const reason = prompt(
                         "Lý do mở lại lượt thi (bắt buộc, sẽ lưu audit — VD: rớt mạng phòng thi):"
                       );
                       if (reason?.trim())
-                        sessionOp(selected.session_id!, { action: "resume", reason: reason.trim() });
+                        sessionOp(selected.session_id!, {
+                          action: "resume",
+                          minutes: Math.round(minutes),
+                          reason: reason.trim(),
+                        });
                     }}
                     className="w-full rounded-md border border-blue-300 text-blue-700 text-sm py-2 hover:bg-blue-50"
                   >

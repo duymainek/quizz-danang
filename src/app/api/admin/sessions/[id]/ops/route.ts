@@ -15,7 +15,11 @@ const schema = z.discriminatedUnion("action", [
     score: z.number().min(0).max(1000),
     reason: z.string().trim().min(1).max(500),
   }),
-  z.object({ action: z.literal("resume"), reason: z.string().trim().min(1).max(500) }),
+  z.object({
+    action: z.literal("resume"),
+    minutes: z.number().int().min(1).max(120),
+    reason: z.string().trim().min(1).max(500),
+  }),
 ]);
 
 /**
@@ -137,10 +141,16 @@ export async function POST(
         // phạm) — dùng khi lý do là bất khả kháng (rớt mạng, sự cố thiết bị,
         // vi phạm oan...). Khác với "Reset lượt thi": KHÔNG tạo lượt mới,
         // GIỮ NGUYÊN đề đã random + toàn bộ đáp án đã lưu trong bảng `answers`,
-        // chỉ cấp lại đúng số thời gian còn lại tại thời điểm bị cắt (không
-        // trừ oan thời gian thí sinh bị gián đoạn), và reset bộ đếm vi phạm về
-        // 0 để không bị auto-submit lại ngay (log vi phạm cũ vẫn giữ nguyên
-        // trong violation_logs để audit).
+        // reset bộ đếm vi phạm về 0 để không bị auto-submit lại ngay (log vi
+        // phạm cũ vẫn giữ nguyên trong violation_logs để audit).
+        //
+        // Số phút cấp lại DO ADMIN NHẬP TAY (giống hệt "Extend"), không tự
+        // tính "thời gian còn lại tại thời điểm bị cắt" như bản đầu — vì nếu
+        // lượt bị cắt do HẾT GIỜ TỰ NHIÊN (không phải bị vi phạm cắt ngang
+        // giữa chừng) thì thời gian còn lại tại thời điểm cắt luôn xấp xỉ 0,
+        // khiến thí sinh chỉ được cấp vài chục giây rồi auto-submit lại ngay
+        // lập tức — admin phải bấm resume lặp lại nhiều lần mới đủ thời gian
+        // thực làm bài (bug thực tế đã gặp).
         if (session.status !== "auto_submitted") {
           return jsonError(
             "Chỉ resume được lượt bị TỰ ĐỘNG nộp (hết giờ/vi phạm) — dùng 'Nộp hộ' hoặc 'Hủy kết quả' cho các trường hợp khác",
@@ -153,16 +163,7 @@ export async function POST(
         const exam = session.exams as unknown as { duration_minutes: number } | null;
         if (!exam) throw new Error("Không tìm thấy thông tin đề thi của phiên này");
 
-        const originalDeadline =
-          new Date(session.started_at).getTime() +
-          (exam.duration_minutes + (session.extra_minutes ?? 0)) * 60_000;
-        const cutoffAt = session.submitted_at
-          ? new Date(session.submitted_at).getTime()
-          : originalDeadline;
-        // Ít nhất 1 phút để thí sinh kịp thao tác lại, phòng trường hợp bị
-        // cắt đúng lúc gần hết giờ.
-        const remainingMs = Math.max(originalDeadline - cutoffAt, 60_000);
-        const newDeadline = Date.now() + remainingMs;
+        const newDeadline = Date.now() + body.minutes * 60_000;
         const newExtraMinutes =
           Math.ceil((newDeadline - new Date(session.started_at).getTime()) / 60_000) -
           exam.duration_minutes;
@@ -188,9 +189,8 @@ export async function POST(
         // tiếp — xoá để tránh hiển thị nhầm điểm cũ trước khi nộp lại thật.
         await db.from("scores").delete().eq("session_id", id);
 
-        const grantedMinutes = Math.round(remainingMs / 60_000);
-        audit("resume_session", { reason: body.reason, granted_remaining_minutes: grantedMinutes });
-        return NextResponse.json({ ok: true, granted_remaining_minutes: grantedMinutes });
+        audit("resume_session", { reason: body.reason, granted_minutes: body.minutes });
+        return NextResponse.json({ ok: true, granted_minutes: body.minutes });
       }
     }
   } catch (err) {
